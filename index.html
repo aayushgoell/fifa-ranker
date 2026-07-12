@@ -131,7 +131,7 @@
         <input id="starsB" type="number" step="0.5" min="0.5" max="5" placeholder="Stars (e.g. 4.5)">
       </div>
     </div>
-    <select id="endType" style="margin-bottom:10px">
+    <select id="endType" style="margin-bottom:10px" onchange="togglePen()">
       <option value="regulation">Full time</option>
       <option value="flush">Flush (mercy rule)</option>
       <option value="extra_time">Extra time</option>
@@ -139,6 +139,12 @@
       <option value="forfeit">Forfeit / rage-quit</option>
       <option value="void">Void / abandoned</option>
     </select>
+    <div id="penRow" class="row" style="display:none;margin-bottom:10px;align-items:center;gap:8px">
+      <span class="sub" style="white-space:nowrap">Shootout</span>
+      <input class="sc" style="width:48px" id="penA" type="number" inputmode="numeric" placeholder="0">
+      <span class="muted">–</span>
+      <input class="sc" style="width:48px" id="penB" type="number" inputmode="numeric" placeholder="0">
+    </div>
     <button onclick="logGame()">Submit result</button>
     <div id="gateWarn" class="sub" style="margin-top:8px;color:var(--warn);display:none"></div>
   </div>
@@ -347,16 +353,27 @@ async function logGame(){
     const gd=Math.abs(sa-sb2), min=FLUSH_MIN[fmt]||3;
     if(gd<min){ alert(`A ${fmt} flush needs at least a ${min}-goal difference (first half ${min}, second half ${min+1}). This game is ${sa}–${sb2}.`); return; }
   }
-  const winner = end==='void' ? 'A' : sa>sb2?'A':sa<sb2?'B':'draw';
+  let pa=null, pb=null;
+  if(end==='penalties'){
+    pa=parseInt(penA.value); pb=parseInt(penB.value);
+    if(isNaN(pa)||isNaN(pb)){ alert('Enter the penalty shootout score'); return; }
+    if(pa===pb){ alert("A shootout must have a winner — the penalty score can't be level."); return; }
+    if(sa!==sb2){ alert(`The match score must be level to go to penalties (it's ${sa}–${sb2}). Enter the full-time draw above and the shootout here.`); return; }
+  }
+  const winner = end==='void' ? 'A'
+    : end==='penalties' ? (pa>pb?'A':'B')
+    : sa>sb2?'A':sa<sb2?'B':'draw';
   const rec={ format:fmt, side_a:A, side_b:B, winner, end_type:end,
     team_a:teamA.value.trim()||null, stars_a:parseFloat(starsA.value)||null,
     team_b:teamB.value.trim()||null, stars_b:parseFloat(starsB.value)||null,
-    score_a:sa, score_b:sb2, submitted_by:mePlayer, status:'pending' };
+    score_a:sa, score_b:sb2, pen_a:pa, pen_b:pb, submitted_by:mePlayer, status:'pending' };
   const {error}=await sb.from('matches').insert(rec);
   if(error){ alert(error.message); return; }
-  sA.value=''; sB.value=''; teamA.value=''; teamB.value=''; starsA.value=''; starsB.value=''; gateWarn.style.display='none';
+  sA.value=''; sB.value=''; teamA.value=''; teamB.value=''; starsA.value=''; starsB.value='';
+  penA.value=''; penB.value=''; endType.value='regulation'; togglePen(); gateWarn.style.display='none';
   await load();
 }
+function togglePen(){ penRow.style.display = endType.value==='penalties' ? '' : 'none'; }
 async function setStatus(id, status){
   const {error}=await sb.from('matches').update({status}).eq('id',id);
   if(error){ alert(error.message); return; }
@@ -397,7 +414,7 @@ function gameCard(m, pending){
   const exhibit = m.stars_a!=null && m.stars_b!=null && Math.abs(m.stars_a-m.stars_b)>STAR_GATE;
   const flags=[m.format];
   if(m.end_type==='flush') flags.push('⚡ flush');
-  if(m.end_type==='penalties') flags.push('pens');
+  if(m.end_type==='penalties') flags.push('pens'+(m.pen_a!=null?` ${m.pen_a}–${m.pen_b}`:''));
   if(m.end_type==='extra_time') flags.push('ET');
   if(m.end_type==='forfeit') flags.push('forfeit');
   if(m.end_type==='void') flags.push('void');
