@@ -257,7 +257,7 @@ function mostImproved(){
 }
 
 // ---- state ----
-let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null;
+let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false;
 const $ = id => document.getElementById(id);
 
 async function load(){
@@ -316,6 +316,12 @@ async function setStatus(id, status){
   if(error){ alert(error.message); return; }
   await load();
 }
+async function deleteMatch(id){         // admin only (enforced by RLS)
+  if(!confirm('Delete this match permanently? The leaderboard recomputes without it.')) return;
+  const {error}=await sb.from('matches').delete().eq('id',id);
+  if(error){ alert(error.message); return; }
+  await load();
+}
 // only a participant who did NOT submit may confirm
 function canConfirm(m){
   const inMatch = m.side_a.includes(mePlayer) || m.side_b.includes(mePlayer);
@@ -342,10 +348,12 @@ function gameCard(m, pending){
   if(m.end_type==='void') flags.push('void');
   if(exhibit) flags.push('exhibition');
   const teamLine=(t,s)=> t? `${t}${s!=null?' '+s+'★':''}` : (s!=null?s+'★':'—');
-  const btns = pending ? (canConfirm(m) ? `<div class="row" style="margin-top:8px;gap:6px">
-      <button class="sm ghost" onclick="setStatus(${m.id},'confirmed')">Confirm</button>
-      <button class="sm ghost" onclick="setStatus(${m.id},'disputed')">Dispute</button>
-    </div>` : `<div class="sub" style="margin-top:8px">Waiting for the other side to confirm</div>`) : '';
+  const confirmBtns = pending ? ((canConfirm(m)||meAdmin) ? `
+      <button class="sm ghost" onclick="setStatus(${m.id},'confirmed')">Confirm${meAdmin&&!canConfirm(m)?' (admin)':''}</button>
+      <button class="sm ghost" onclick="setStatus(${m.id},'disputed')">Reject</button>`
+    : `<span class="sub">Waiting for the other side to confirm</span>`) : '';
+  const adminBtns = meAdmin ? `<button class="sm ghost" style="border-color:var(--loss);color:var(--loss)" onclick="deleteMatch(${m.id})">Delete</button>` : '';
+  const btns = (confirmBtns||adminBtns) ? `<div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">${confirmBtns}${adminBtns}</div>` : '';
   return `<div class="game ${pending?'pending':''} ${exhibit&&!pending?'exhib':''}">
     <div class="top">
       <div class="side"><div class="pn ${aw?'w':'l'}">${A}</div><div class="tm">${teamLine(m.team_a,m.stars_a)}</div></div>
@@ -406,13 +414,13 @@ async function sendLink(){
   const {error}=await sb.auth.signInWithOtp({ email, options:{ emailRedirectTo: location.href } });
   $('loginMsg').textContent = error ? error.message : 'Check your email for the login link, then reopen this page.';
 }
-async function logout(){ await sb.auth.signOut(); mePlayer=null; show('login'); }
+async function logout(){ await sb.auth.signOut(); mePlayer=null; meAdmin=false; show('login'); }
 
 async function handleAuth(session){
   if(!session){ show('login'); return; }
   const uid = session.user.id;
-  const {data:prof} = await sb.from('profiles').select('player').eq('id',uid).maybeSingle();
-  if(prof){ mePlayer=prof.player; $('meName').textContent=mePlayer; show('app'); await load(); return; }
+  const {data:prof} = await sb.from('profiles').select('player, is_admin').eq('id',uid).maybeSingle();
+  if(prof){ mePlayer=prof.player; meAdmin=!!prof.is_admin; $('meName').textContent=mePlayer+(meAdmin?' (admin)':''); show('app'); await load(); return; }
   // first login -> claim a name
   const [{data:pl},{data:profs}] = await Promise.all([ sb.from('players').select('name'), sb.from('profiles').select('player') ]);
   const claimed=new Set((profs||[]).map(p=>p.player));
