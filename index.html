@@ -112,6 +112,7 @@
 <div id="app" style="display:none">
   <div class="authbar">
     <span class="who">Signed in as <b id="meName"></b></span>
+    <button class="sm ghost" onclick="openUsernameModal()">Username</button>
     <button class="sm ghost" id="themeBtn" onclick="toggleTheme()" title="Toggle light/dark">☀️</button>
     <button class="sm ghost" onclick="logout()">Log out</button>
   </div>
@@ -119,8 +120,8 @@
   <div id="mainView">
 
   <div class="card" id="rosterCard" style="display:none">
-    <div class="sub" style="margin-bottom:8px">Admin: add a player — their name is locked to this email.</div>
-    <div class="row"><input id="newName" placeholder="Player name" autocomplete="off"><input id="newEmail" type="email" placeholder="their@email.com" autocomplete="off"><button class="sm" onclick="addPlayer()">Add</button></div>
+    <div class="sub" style="margin-bottom:8px">Admin: add a player with their starting username and login email.</div>
+    <div class="row"><input id="newName" placeholder="Starting username" autocomplete="off"><input id="newEmail" type="email" placeholder="their@email.com" autocomplete="off"><button class="sm" onclick="addPlayer()">Add</button></div>
   </div>
 
   <h2>Log a game</h2>
@@ -210,6 +211,19 @@
     <div class="row">
       <button class="ghost" onclick="cancelDelete()">Cancel</button>
       <button style="background:var(--loss);color:white" onclick="confirmDelete()">Delete permanently</button>
+    </div>
+  </div>
+</div>
+
+<div id="usernameModal" class="modal-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="usernameTitle">
+  <div class="card">
+    <div id="usernameTitle" style="font-weight:700;margin-bottom:6px">Change username</div>
+    <div class="sub" style="margin-bottom:10px">3–24 characters. Letters, numbers and underscores only.</div>
+    <input id="usernameInput" maxlength="24" autocomplete="off" placeholder="New username" style="margin-bottom:8px">
+    <div id="usernameMsg" class="sub" style="min-height:18px;margin-bottom:8px"></div>
+    <div class="row">
+      <button class="ghost" onclick="closeUsernameModal()">Cancel</button>
+      <button onclick="saveUsername()">Save username</button>
     </div>
   </div>
 </div>
@@ -341,7 +355,7 @@ function mostImproved(){
 }
 
 // ---- state ----
-let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histExpanded=false, histPage=1, profilePlayer=null, profilePage=1, profileChart=null, editingMatchId=null, deletingMatchId=null;
+let sb=null, playerRows=[], players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histExpanded=false, histPage=1, profilePlayer=null, profilePage=1, profileChart=null, editingMatchId=null, deletingMatchId=null;
 const HIST_PREVIEW=3, HIST_PAGE_SIZE=5;
 function toggleHist(){ histExpanded=!histExpanded; histPage=1; render(); }
 function setHistPage(page){ histPage=page; render(); hist.scrollIntoView({behavior:'smooth',block:'start'}); }
@@ -357,6 +371,7 @@ function winOdds(name, R){
   return opps.reduce((s,q)=> s + 1/(1+Math.pow(10,(R[q].r-rp)/400)), 0)/opps.length;
 }
 const $ = id => document.getElementById(id);
+const displayName = id => playerRows.find(p=>p.name===id)?.username || id;
 const TEAM_OPTIONS=['Real Madrid','FC Barcelona','Paris Saint Germain','Bayern Munich','France','Spain','Manchester City','Portugal','Liverpool','Argentina','England','Arsenal'];
 function initTeamChoices(){
   const options='<option value="">Custom</option>'+TEAM_OPTIONS.map(t=>`<option value="${t}">${t}</option>`).join('');
@@ -396,8 +411,10 @@ async function load(){
     sb.from('players').select('*'),
     sb.from('matches').select('*').order('created_at'),
   ]);
-  players = (pl||[]).map(p=>p.name);
+  playerRows = pl||[];
+  players = playerRows.map(p=>p.name);
   matches = ms||[];
+  if(mePlayer) $('meName').textContent=displayName(mePlayer)+(meAdmin?' (admin)':'');
   render();
 }
 
@@ -405,9 +422,28 @@ async function addPlayer(){
   const name=$('newName').value.trim(), email=$('newEmail').value.trim().toLowerCase();
   if(!name || !email){ alert('Enter both a name and their email'); return; }
   if(players.includes(name)){ alert('Already on the roster'); return; }
-  const {error}=await sb.from('players').insert({name, email});
+  if(!/^[A-Za-z0-9_]{3,24}$/.test(name)){ alert('The starting username must be 3–24 characters using letters, numbers or underscores'); return; }
+  const {error}=await sb.from('players').insert({name, username:name, email});
   if(error){ alert(error.message); return; }
   $('newName').value=''; $('newEmail').value=''; await load();
+}
+
+function openUsernameModal(){
+  usernameInput.value=displayName(mePlayer);
+  usernameMsg.textContent='';
+  usernameModal.style.display='flex';
+  usernameInput.focus(); usernameInput.select();
+}
+function closeUsernameModal(){ usernameModal.style.display='none'; usernameMsg.textContent=''; }
+async function saveUsername(){
+  const username=usernameInput.value.trim();
+  if(!/^[A-Za-z0-9_]{3,24}$/.test(username)){
+    usernameMsg.textContent='Use 3–24 letters, numbers or underscores.'; return;
+  }
+  usernameMsg.textContent='Checking availability…';
+  const {error}=await sb.rpc('change_username',{new_username:username});
+  if(error){ usernameMsg.textContent=error.message; return; }
+  closeUsernameModal(); await load();
 }
 
 // per-format side sizes. b:'AI' means side B is the fixed AI player.
@@ -533,7 +569,7 @@ function canConfirm(m){
 
 // ---- render ----
 function fillSelects(){
-  const opts = players.map(n=>`<option>${n}</option>`).join('');
+  const opts = players.map(n=>`<option value="${n}">${displayName(n)}</option>`).join('');
   [pA1,pA2,pA3,pA4,pB1,pB2].forEach(sel=>{ const v=sel.value; sel.innerHTML=opts; if(v&&players.includes(v)) sel.value=v; });
   if(players[1] && !pB1.value) pB1.value=players[1];
 }
@@ -548,7 +584,7 @@ function boardOrder(ms){
 }
 
 function gameCard(m, pending){
-  const A=m.side_a.join(' & '), B=m.side_b.join(' & ');
+  const A=m.side_a.map(displayName).join(' & '), B=m.side_b.map(displayName).join(' & ');
   const aw=m.winner==='A', bw=m.winner==='B';
   const when=new Date(m.created_at).toLocaleDateString([], {month:'short',day:'numeric'});
   const exhibit = m.stars_a!=null && m.stars_b!=null && Math.abs(m.stars_a-m.stars_b)>STAR_GATE;
@@ -574,7 +610,7 @@ function gameCard(m, pending){
       <span class="sc">${m.score_a??''}</span><span class="muted">–</span><span class="sc">${m.score_b??''}</span>
       <div class="side r"><div class="pn ${bw?'w':'l'}">${B}</div><div class="tm">${teamLine(m.team_b,m.stars_b)}</div></div>
     </div>
-    <div class="meta"><span>${when} · ${flags.join(' · ')}</span><span>${m.submitted_by?'by '+m.submitted_by:''}</span></div>
+    <div class="meta"><span>${when} · ${flags.join(' · ')}</span><span>${m.submitted_by?'by '+displayName(m.submitted_by):''}</span></div>
     ${btns}
   </div>`;
 }
@@ -681,7 +717,7 @@ function renderProfile(){
     <button class="sm ghost" style="width:auto" onclick="setProfilePage(${profilePage+1})" ${profilePage===totalPages?'disabled':''}>Next</button>
   </div>`:'';
   profileContent.innerHTML=`
-    <h1 style="margin-top:4px">${name}</h1>
+    <h1 style="margin-top:4px">${displayName(name)}</h1>
     <div class="sub" style="margin-bottom:12px">${provisional?`Provisional · ${PROV_GAMES-r.games} rated games needed`:`Rank #${rankIndex+1}`}${form.length?' · '+dots(form):''}</div>
     <div class="profile-grid">
       <button class="card profile-stat ${profileChart==='rating'?'active':''}" aria-pressed="${profileChart==='rating'}" onclick="selectProfileChart('rating')"><span class="sub">Rating</span><span class="rating">${Math.round(r.r)}</span></button>
@@ -692,7 +728,7 @@ function renderProfile(){
       <button class="card profile-stat ${profileChart==='odds'?'active':''}" aria-pressed="${profileChart==='odds'}" onclick="selectProfileChart('odds')"><span class="sub">Live win odds</span><span class="rating">${odds==null?'—':Math.round(odds*100)+'%'}</span></button>
     </div>
     ${profileChartHtml(name,profileChart,w,d,l)}
-    ${bestPair?`<div class="card"><span class="sub">Best partnership</span><div style="font-weight:700;margin-top:3px">${bestPair.k}</div><div class="sub">${bestPair.w}-${bestPair.l}${bestPair.d?'-'+bestPair.d:''} · ${Math.round(bestPair.wr*100)}%</div></div>`:''}
+    ${bestPair?`<div class="card"><span class="sub">Best partnership</span><div style="font-weight:700;margin-top:3px">${bestPair.k.split(' & ').map(displayName).join(' & ')}</div><div class="sub">${bestPair.w}-${bestPair.l}${bestPair.d?'-'+bestPair.d:''} · ${Math.round(bestPair.wr*100)}%</div></div>`:''}
     <h2>Full match history <span class="sub" style="text-transform:none;letter-spacing:0">· ${history.length} games</span></h2>
     ${shown.length?shown.map(m=>gameCard(m,m.status==='pending')).join(''):'<div class="card sub">No matches yet.</div>'}
     ${pager}`;
@@ -719,7 +755,7 @@ function render(){
     const oddsHtml = odds!=null ? `<span class="odds" title="Live chance to beat a random opponent">${Math.round(odds*100)}%</span>` : '';
     return `<div class="card rank ${prov?'prov':''}" role="button" tabindex="0" data-player="${encodeURIComponent(x.n)}" onclick="openProfile(decodeURIComponent(this.dataset.player))" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProfile(decodeURIComponent(this.dataset.player))}">
       <span class="pos ${prov?'':medal[est-1]||''}">${prov?'·':est}</span>
-      <div class="name"><span class="profile-link">${x.n}</span>${prov?`<span class="tag">provisional</span>`:''}
+      <div class="name"><span class="profile-link">${displayName(x.n)}</span>${prov?`<span class="tag">provisional</span>`:''}
         <div class="sub">${x.games} rated${prov?` · need ${PROV_GAMES-x.games} more`:''}${carry}${formOf(x.n).length?' '+dots(formOf(x.n)):''}</div>
       </div>
       ${oddsHtml}${move}
@@ -731,25 +767,25 @@ function render(){
   const st=scorerTable();
   $('scorers').innerHTML = st.length ? `<table class="st">
     <tr><th>Player</th><th>GP</th><th>Goals</th><th>Conceded</th><th>GD</th></tr>
-    ${st.map((x,i)=>`<tr><td><span class="pos-n">${i+1}</span>${x.n}</td><td>${x.gp}</td><td class="g">${x.gf}</td><td>${x.ga}</td><td>${x.gd>0?'+':''}${x.gd}</td></tr>`).join('')}
+    ${st.map((x,i)=>`<tr><td><span class="pos-n">${i+1}</span>${displayName(x.n)}</td><td>${x.gp}</td><td class="g">${x.gf}</td><td>${x.ga}</td><td>${x.gd>0?'+':''}${x.gd}</td></tr>`).join('')}
   </table>` : '<div class="sub" style="padding:12px">No goals yet.</div>';
 
   // fun stats
   const parts=partnerships(), imp=mostImproved(), myRec=mePlayer?h2h(mePlayer):{};
   const partHtml = parts.length ? `<div class="card"><b class="sub">Best partnerships</b><table class="st">
     <tr><th>Duo</th><th>Record</th><th>Win%</th></tr>
-    ${parts.slice(0,5).map(x=>`<tr><td>${x.k}</td><td>${x.w}-${x.l}${x.d?'-'+x.d:''}</td><td>${Math.round(x.wr*100)}%</td></tr>`).join('')}
+    ${parts.slice(0,5).map(x=>`<tr><td>${x.k.split(' & ').map(displayName).join(' & ')}</td><td>${x.w}-${x.l}${x.d?'-'+x.d:''}</td><td>${Math.round(x.wr*100)}%</td></tr>`).join('')}
   </table></div>` : '';
-  const impHtml = imp ? `<div class="card"><b class="sub">📈 Most improved this week</b><div style="margin-top:4px">${imp.n} <span class="rating" style="color:var(--win)">+${Math.round(imp.d)}</span></div></div>` : '';
+  const impHtml = imp ? `<div class="card"><b class="sub">📈 Most improved this week</b><div style="margin-top:4px">${displayName(imp.n)} <span class="rating" style="color:var(--win)">+${Math.round(imp.d)}</span></div></div>` : '';
   const myOpps=Object.entries(myRec);
-  const h2hHtml = myOpps.length ? `<div class="card"><b class="sub">Your head-to-head (${mePlayer})</b><table class="st">
+  const h2hHtml = myOpps.length ? `<div class="card"><b class="sub">Your head-to-head (${displayName(mePlayer)})</b><table class="st">
     <tr><th>Opponent</th><th>W</th><th>D</th><th>L</th></tr>
-    ${myOpps.sort((a,b)=>(b[1].w+b[1].l+b[1].d)-(a[1].w+a[1].l+a[1].d)).map(([o,v])=>`<tr><td>${o}</td><td>${v.w}</td><td>${v.d}</td><td>${v.l}</td></tr>`).join('')}
+    ${myOpps.sort((a,b)=>(b[1].w+b[1].l+b[1].d)-(a[1].w+a[1].l+a[1].d)).map(([o,v])=>`<tr><td>${displayName(o)}</td><td>${v.w}</td><td>${v.d}</td><td>${v.l}</td></tr>`).join('')}
   </table></div>` : '';
   const fl=flushCounts();
   const flushHtml = fl.length ? `<div class="card"><b class="sub">⚡ Flush leaders</b><table class="st">
     <tr><th>Player</th><th>Flushes</th></tr>
-    ${fl.slice(0,5).map(x=>`<tr><td>${x.n}</td><td>${x.v}</td></tr>`).join('')}
+    ${fl.slice(0,5).map(x=>`<tr><td>${displayName(x.n)}</td><td>${x.v}</td></tr>`).join('')}
   </table></div>` : '';
   const stats = partHtml+flushHtml+impHtml+h2hHtml;
   $('stats').innerHTML = stats || '<div class="card sub">Play some games to unlock stats.</div>';
