@@ -117,7 +117,8 @@
         <select id="pA2" style="display:none"></select>
         <select id="pA3" style="display:none"></select>
         <select id="pA4" style="display:none"></select>
-        <input id="teamA" placeholder="Team name" autocomplete="off">
+        <select id="teamAChoice" onchange="toggleTeamCustom('A')"></select>
+        <input id="teamA" placeholder="Enter custom team" autocomplete="off">
         <input id="starsA" type="number" step="0.5" min="0.5" max="5" placeholder="Stars (e.g. 4.5)">
       </div>
       <div style="padding-top:26px" class="row">
@@ -130,7 +131,8 @@
         <select id="pB1"></select>
         <select id="pB2" style="display:none"></select>
         <div id="aiSide" style="display:none;font-weight:600;padding:10px 0">🤖 AI</div>
-        <input id="teamB" placeholder="Team name" autocomplete="off">
+        <select id="teamBChoice" onchange="toggleTeamCustom('B')"></select>
+        <input id="teamB" placeholder="Enter custom team" autocomplete="off">
         <input id="starsB" type="number" step="0.5" min="0.5" max="5" placeholder="Stars (e.g. 4.5)">
       </div>
     </div>
@@ -321,6 +323,28 @@ function winOdds(name, R){
   return opps.reduce((s,q)=> s + 1/(1+Math.pow(10,(R[q].r-rp)/400)), 0)/opps.length;
 }
 const $ = id => document.getElementById(id);
+const TEAM_OPTIONS=['Real Madrid','FC Barcelona','Paris Saint Germain','Bayern Munich','France','Spain','Manchester City','Portugal','Liverpool','Argentina','England','Arsenal'];
+function initTeamChoices(){
+  const options='<option value="">Custom</option>'+TEAM_OPTIONS.map(t=>`<option value="${t}">${t}</option>`).join('');
+  teamAChoice.innerHTML=options; teamBChoice.innerHTML=options;
+  toggleTeamCustom('A'); toggleTeamCustom('B');
+}
+function toggleTeamCustom(side){
+  const choice=side==='A'?teamAChoice:teamBChoice, input=side==='A'?teamA:teamB;
+  input.style.display=choice.value?'none':'';
+  if(choice.value) input.value='';
+}
+function teamValue(side){
+  const choice=side==='A'?teamAChoice:teamBChoice, input=side==='A'?teamA:teamB;
+  return choice.value || input.value.trim() || null;
+}
+function setTeamField(side, value){
+  const choice=side==='A'?teamAChoice:teamBChoice, input=side==='A'?teamA:teamB;
+  if(value && TEAM_OPTIONS.includes(value)){ choice.value=value; input.value=''; }
+  else { choice.value=''; input.value=value||''; }
+  toggleTeamCustom(side);
+}
+function resetTeamFields(){ setTeamField('A',''); setTeamField('B',''); }
 
 async function load(){
   const [{data:pl}, {data:ms}] = await Promise.all([
@@ -389,15 +413,15 @@ async function logGame(){
     : end==='penalties' ? (pa>pb?'A':'B')
     : sa>sb2?'A':sa<sb2?'B':'draw';
   const rec={ format:fmt, side_a:A, side_b:B, winner, end_type:end,
-    team_a:teamA.value.trim()||null, stars_a:parseFloat(starsA.value)||null,
-    team_b:teamB.value.trim()||null, stars_b:parseFloat(starsB.value)||null,
+    team_a:teamValue('A'), stars_a:parseFloat(starsA.value)||null,
+    team_b:teamValue('B'), stars_b:parseFloat(starsB.value)||null,
     score_a:sa, score_b:sb2, pen_a:pa, pen_b:pb };
   const {error}=editingMatchId
     ? await sb.from('matches').update(rec).eq('id',editingMatchId)
     : await sb.from('matches').insert({...rec, submitted_by:mePlayer, status:'pending'});
   if(error){ alert(error.message); return; }
   editingMatchId=null;
-  sA.value=''; sB.value=''; teamA.value=''; teamB.value=''; starsA.value=''; starsB.value='';
+  sA.value=''; sB.value=''; resetTeamFields(); starsA.value=''; starsB.value='';
   penA.value=''; penB.value=''; endType.value='regulation'; togglePen(); gateWarn.style.display='none';
   submitBtn.textContent='Submit result'; editBar.style.display='none';
   await load();
@@ -438,7 +462,7 @@ function editMatch(id){                 // admin only (enforced by RLS)
   const cfg=FORMATS[m.format];
   aSelects.slice(0,cfg.a).forEach((s,i)=>s.value=m.side_a[i]||'');
   if(cfg.b!=='AI') bSelects.slice(0,cfg.b).forEach((s,i)=>s.value=m.side_b[i]||'');
-  teamA.value=m.team_a||''; teamB.value=m.team_b||'';
+  setTeamField('A',m.team_a); setTeamField('B',m.team_b);
   starsA.value=m.stars_a??''; starsB.value=m.stars_b??'';
   sA.value=m.score_a??''; sB.value=m.score_b??'';
   endType.value=m.end_type||'regulation';
@@ -450,7 +474,7 @@ function editMatch(id){                 // admin only (enforced by RLS)
 function cancelEdit(){
   editingMatchId=null;
   submitBtn.textContent='Submit result'; editBar.style.display='none';
-  sA.value=''; sB.value=''; teamA.value=''; teamB.value=''; starsA.value=''; starsB.value='';
+  sA.value=''; sB.value=''; resetTeamFields(); starsA.value=''; starsB.value='';
   penA.value=''; penB.value=''; endType.value='regulation'; togglePen(); gateWarn.style.display='none';
 }
 // only a participant who did NOT submit may confirm
@@ -641,6 +665,7 @@ function applyTheme(t){
 function toggleTheme(){ applyTheme(document.documentElement.dataset.theme==='light' ? 'dark' : 'light'); }
 
 // ---- boot ----
+initTeamChoices();
 applyTheme(localStorage.getItem('fifa-theme') || 'dark');
 if(SUPABASE_URL.startsWith('YOUR_') || SUPABASE_ANON_KEY.startsWith('YOUR_')){
   show('setup');
