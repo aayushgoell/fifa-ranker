@@ -7,6 +7,9 @@
 <title>FIFA Ranker</title>
 <style>
   :root { --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --fg:#e8eaed; --mut:#9aa0aa; --accent:#0b7; --win:#2ea043; --loss:#e5484d; --warn:#d9a441; }
+  :root[data-theme="light"] { --bg:#f5f6f8; --card:#ffffff; --line:#e3e6ea; --fg:#1a1d24; --mut:#5f6b7a; --accent:#0a9d6e; --win:#1f9d3a; --loss:#d1293d; --warn:#b7791f; }
+  .move { font-variant-numeric:tabular-nums; font-size:12px; font-weight:700; margin-right:8px; }
+  .move.up { color:var(--win); } .move.down { color:var(--loss); } .move.same { color:var(--mut); font-weight:400; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body { margin:0; font:16px/1.4 -apple-system,system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px 16px 80px; max-width:600px; margin:0 auto; }
   h1 { font-size:22px; margin:6px 0 4px; }
@@ -53,6 +56,8 @@
   table.st th { font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--mut); font-weight:600; border-bottom:1px solid var(--line); }
   table.st td:first-child, table.st th:first-child { text-align:left; }
   table.st tr:not(:last-child) td { border-bottom:1px solid var(--line); }
+  table.st td.g { font-weight:700; color:var(--fg); }
+  .pos-n { color:var(--mut); display:inline-block; width:16px; }
   .authbar { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
   .authbar .who { flex:1; font-size:14px; }
   .center { max-width:360px; margin:60px auto 0; text-align:center; }
@@ -84,6 +89,7 @@
 <div id="app" style="display:none">
   <div class="authbar">
     <span class="who">Signed in as <b id="meName"></b></span>
+    <button class="sm ghost" id="themeBtn" onclick="toggleTheme()" title="Toggle light/dark">☀️</button>
     <button class="sm ghost" onclick="logout()">Log out</button>
   </div>
 
@@ -127,6 +133,7 @@
     </div>
     <select id="endType" style="margin-bottom:10px">
       <option value="regulation">Full time</option>
+      <option value="flush">Flush (mercy rule)</option>
       <option value="extra_time">Extra time</option>
       <option value="penalties">Penalties (½ weight)</option>
       <option value="forfeit">Forfeit / rage-quit</option>
@@ -143,6 +150,9 @@
 
   <h2>Leaderboard</h2>
   <div id="board"></div>
+
+  <h2>Top scorers <span class="sub" style="text-transform:none;letter-spacing:0"> — team goals credited per player</span></h2>
+  <div id="scorers" class="card" style="padding:0;overflow:hidden"></div>
 
   <h2>Fun stats <span class="sub" style="text-transform:none;letter-spacing:0"> — not the official ranking</span></h2>
   <div id="stats"></div>
@@ -224,6 +234,26 @@ function partnerships(){
   return Object.entries(p).map(([k,v])=>({k,...v,wr:(v.w+v.d*0.5)/v.g}))
     .filter(x=>x.g>=2).sort((a,b)=> b.wr-a.wr || b.g-a.g);
 }
+// flush wins per player (a flush is a mercy-rule blowout — see FLUSH_MIN)
+function flushCounts(){
+  const c={};
+  for(const m of matches){
+    if(m.status!=='confirmed' || m.end_type!=='flush' || (m.winner!=='A'&&m.winner!=='B')) continue;
+    for(const n of (m.winner==='A'?m.side_a:m.side_b)) c[n]=(c[n]||0)+1;
+  }
+  return Object.entries(c).map(([n,v])=>({n,v})).sort((a,b)=>b.v-a.v);
+}
+// top scorers: each side's goals credited to its players (goals for/against/diff)
+function scorerTable(){
+  const s={};
+  const add=(n,gf,ga)=>{ (s[n]=s[n]||{gf:0,ga:0,gp:0}).gf+=gf; s[n].ga+=ga; s[n].gp++; };
+  for(const m of matches){
+    if(m.status!=='confirmed' || m.end_type==='void') continue;
+    for(const n of m.side_a) add(n, m.score_a||0, m.score_b||0);
+    for(const n of m.side_b) add(n, m.score_b||0, m.score_a||0);
+  }
+  return Object.entries(s).map(([n,v])=>({n,...v,gd:v.gf-v.ga})).sort((a,b)=> b.gf-a.gf || b.gd-a.gd);
+}
 function carryIndex(name, R){
   let strong=0, tot=0;
   for(const m of ratedMatches()) for(const side of [m.side_a,m.side_b]){
@@ -282,6 +312,10 @@ async function addPlayer(){
 
 // per-format side sizes. b:'AI' means side B is the fixed AI player.
 const FORMATS = { '1v1':{a:1,b:1}, '1v2':{a:1,b:2}, '2v2':{a:2,b:2}, '3v1':{a:3,b:1}, '4vAI':{a:4,b:'AI'} };
+// min goal difference to qualify as a Flush (the first-half threshold; a second-half
+// flush needs +1 more, but we can't see halves so we validate the lower bound).
+// Base 3; the one-vs-two format (1v2/"2v1") is +1. Other formats default to base.
+const FLUSH_MIN = { '1v1':3, '1v2':4, '2v2':3, '3v1':3, '4vAI':3 };
 const aSelects=[pA1,pA2,pA3,pA4], bSelects=[pB1,pB2];
 function setFmt(f){
   fmt=f;
@@ -309,6 +343,10 @@ async function logGame(){
   const sa=parseInt(sA.value), sb2=parseInt(sB.value);
   if(isNaN(sa)||isNaN(sb2)){ alert('Enter both scores'); return; }
   const end=endType.value;
+  if(end==='flush'){
+    const gd=Math.abs(sa-sb2), min=FLUSH_MIN[fmt]||3;
+    if(gd<min){ alert(`A ${fmt} flush needs at least a ${min}-goal difference (first half ${min}, second half ${min+1}). This game is ${sa}–${sb2}.`); return; }
+  }
   const winner = end==='void' ? 'A' : sa>sb2?'A':sa<sb2?'B':'draw';
   const rec={ format:fmt, side_a:A, side_b:B, winner, end_type:end,
     team_a:teamA.value.trim()||null, stars_a:parseFloat(starsA.value)||null,
@@ -343,6 +381,14 @@ function fillSelects(){
   if(players[1] && !pB1.value) pB1.value=players[1];
 }
 const dots = arr => `<span class="form">${arr.map(r=>`<span class="dot ${r}">${r}</span>`).join('')}</span>`;
+// board sort: provisional players sink below established, then by rating
+const boardCmp = (a,b)=>{ const ap=a.games<PROV_GAMES, bp=b.games<PROV_GAMES; if(ap!==bp) return ap?1:-1; return b.r-a.r; };
+// name -> displayed position for a given match set (used for rank-movement arrows)
+function boardOrder(ms){
+  const RR=computeRatings(players, ms);
+  const rows=Object.entries(RR).map(([n,v])=>({n,...v})).filter(x=>players.includes(x.n)||x.played>0).sort(boardCmp);
+  const map={}; rows.forEach((x,i)=> map[x.n]=i+1); return map;
+}
 
 function gameCard(m, pending){
   const A=m.side_a.join(' & '), B=m.side_b.join(' & ');
@@ -350,6 +396,7 @@ function gameCard(m, pending){
   const when=new Date(m.created_at).toLocaleDateString([], {month:'short',day:'numeric'});
   const exhibit = m.stars_a!=null && m.stars_b!=null && Math.abs(m.stars_a-m.stars_b)>STAR_GATE;
   const flags=[m.format];
+  if(m.end_type==='flush') flags.push('⚡ flush');
   if(m.end_type==='penalties') flags.push('pens');
   if(m.end_type==='extra_time') flags.push('ET');
   if(m.end_type==='forfeit') flags.push('forfeit');
@@ -379,20 +426,33 @@ function render(){
   const R=computeRatings(players, matches);
 
   const rows=Object.entries(R).map(([n,v])=>({n,...v})).filter(x=>players.includes(x.n)||x.played>0);
-  rows.sort((a,b)=>{ const ap=a.games<PROV_GAMES, bp=b.games<PROV_GAMES; if(ap!==bp) return ap?1:-1; return b.r-a.r; });
+  rows.sort(boardCmp);
+  // rank movement caused by the most recent confirmed game
+  const lastRated=[...matches].filter(isRated).sort((a,b)=> new Date(a.created_at)-new Date(b.created_at)).pop();
+  const prevPos = boardOrder(lastRated ? matches.filter(m=>m!==lastRated) : matches);
   const medal=['gold','silver','bronze']; let est=0;
-  board.innerHTML = rows.length ? rows.map(x=>{
+  board.innerHTML = rows.length ? rows.map((x,i)=>{
     const prov=x.games<PROV_GAMES; if(!prov) est++;
     const ci=carryIndex(x.n,R);
     const carry = ci ? ` · carry ${Math.round(ci.pct*100)}%` : '';
+    const pp=prevPos[x.n], np=i+1;
+    const move = pp ? (pp>np?`<span class="move up">▲${pp-np}</span>` : pp<np?`<span class="move down">▼${np-pp}</span>` : `<span class="move same">–</span>`) : '';
     return `<div class="card rank ${prov?'prov':''}">
       <span class="pos ${prov?'':medal[est-1]||''}">${prov?'·':est}</span>
       <div class="name">${x.n}${prov?`<span class="tag">provisional</span>`:''}
         <div class="sub">${x.games} rated${prov?` · need ${PROV_GAMES-x.games} more`:''}${carry}${formOf(x.n).length?' '+dots(formOf(x.n)):''}</div>
       </div>
+      ${move}
       <span class="rating">${Math.round(x.r)}</span>
     </div>`;
   }).join('') : '<div class="card sub">Add players and log a game.</div>';
+
+  // top scorers
+  const st=scorerTable();
+  $('scorers').innerHTML = st.length ? `<table class="st">
+    <tr><th>Player</th><th>GP</th><th>Goals</th><th>Conceded</th><th>GD</th></tr>
+    ${st.map((x,i)=>`<tr><td><span class="pos-n">${i+1}</span>${x.n}</td><td>${x.gp}</td><td class="g">${x.gf}</td><td>${x.ga}</td><td>${x.gd>0?'+':''}${x.gd}</td></tr>`).join('')}
+  </table>` : '<div class="sub" style="padding:12px">No goals yet.</div>';
 
   // fun stats
   const parts=partnerships(), imp=mostImproved(), myRec=mePlayer?h2h(mePlayer):{};
@@ -406,7 +466,12 @@ function render(){
     <tr><th>Opponent</th><th>W</th><th>D</th><th>L</th></tr>
     ${myOpps.sort((a,b)=>(b[1].w+b[1].l+b[1].d)-(a[1].w+a[1].l+a[1].d)).map(([o,v])=>`<tr><td>${o}</td><td>${v.w}</td><td>${v.d}</td><td>${v.l}</td></tr>`).join('')}
   </table></div>` : '';
-  const stats = partHtml+impHtml+h2hHtml;
+  const fl=flushCounts();
+  const flushHtml = fl.length ? `<div class="card"><b class="sub">⚡ Flush leaders</b><table class="st">
+    <tr><th>Player</th><th>Flushes</th></tr>
+    ${fl.slice(0,5).map(x=>`<tr><td>${x.n}</td><td>${x.v}</td></tr>`).join('')}
+  </table></div>` : '';
+  const stats = partHtml+flushHtml+impHtml+h2hHtml;
   $('stats').innerHTML = stats || '<div class="card sub">Play some games to unlock stats.</div>';
 
   const pend=matches.filter(m=>m.status==='pending');
@@ -459,7 +524,16 @@ async function handleAuth(session){
   A(Math.abs((R4.t1.r+R4.t2.r+R4.t3.r+R4.solo.r)-6000)<1e-6,'3v1 zero-sum');
 })();
 
+// ---- theme ----
+function applyTheme(t){
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('fifa-theme', t);
+  const b=$('themeBtn'); if(b) b.textContent = t==='light' ? '🌙' : '☀️';
+}
+function toggleTheme(){ applyTheme(document.documentElement.dataset.theme==='light' ? 'dark' : 'light'); }
+
 // ---- boot ----
+applyTheme(localStorage.getItem('fifa-theme') || 'dark');
 if(SUPABASE_URL.startsWith('YOUR_') || SUPABASE_ANON_KEY.startsWith('YOUR_')){
   show('setup');
 } else {
