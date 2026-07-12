@@ -84,6 +84,9 @@
   .chart-legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; font-size:12px; color:var(--mut); }
   .chart-swatch { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
   .star-display { padding:9px 10px; border:1px solid var(--line); border-radius:8px; color:#e5a900; letter-spacing:2px; text-align:center; background:var(--bg); }
+  .goal-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+  .goal-side { border:1px solid var(--line); border-radius:8px; padding:9px; }
+  .goal-entry { display:grid; grid-template-columns:minmax(0,1fr) 58px; gap:6px; align-items:center; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -135,11 +138,11 @@
     </div>
     <div class="row" style="margin-bottom:10px; align-items:flex-start">
       <div class="col">
-        <div class="sub">Side A</div>
-        <select id="pA1"></select>
-        <select id="pA2" style="display:none"></select>
-        <select id="pA3" style="display:none"></select>
-        <select id="pA4" style="display:none"></select>
+        <div class="sub">Home</div>
+        <select id="pA1" onchange="renderGoalInputs()"></select>
+        <select id="pA2" style="display:none" onchange="renderGoalInputs()"></select>
+        <select id="pA3" style="display:none" onchange="renderGoalInputs()"></select>
+        <select id="pA4" style="display:none" onchange="renderGoalInputs()"></select>
         <select id="teamAChoice" onchange="toggleTeamCustom('A')"></select>
         <input id="teamA" placeholder="Enter custom team" autocomplete="off">
         <input id="starsA" type="number" step="0.5" min="0.5" max="5" placeholder="Stars (e.g. 4.5)">
@@ -151,9 +154,9 @@
         <input class="sc" style="width:48px" id="sB" type="number" inputmode="numeric" min="0" value="0">
       </div>
       <div class="col">
-        <div class="sub">Side B</div>
-        <select id="pB1"></select>
-        <select id="pB2" style="display:none"></select>
+        <div class="sub">Away</div>
+        <select id="pB1" onchange="renderGoalInputs()"></select>
+        <select id="pB2" style="display:none" onchange="renderGoalInputs()"></select>
         <div id="aiSide" style="display:none;font-weight:600;padding:10px 0">🤖 AI</div>
         <select id="teamBChoice" onchange="toggleTeamCustom('B')"></select>
         <input id="teamB" placeholder="Enter custom team" autocomplete="off">
@@ -161,6 +164,11 @@
         <div id="starsBDisplay" class="star-display" style="display:none" aria-label="5 stars">★★★★★</div>
       </div>
     </div>
+    <label class="row" style="margin-bottom:10px;cursor:pointer">
+      <input id="logIndividualGoals" type="checkbox" onchange="toggleGoalLogging()" style="width:auto">
+      <span>Log individual goals</span>
+    </label>
+    <div id="individualGoals" class="goal-grid" style="display:none"></div>
     <select id="endType" style="margin-bottom:10px" onchange="togglePen()">
       <option value="regulation">Full time</option>
       <option value="flush">Flush (mercy rule)</option>
@@ -188,7 +196,7 @@
   <h2>Leaderboard</h2>
   <div id="board"></div>
 
-  <h2>Top scorers <span class="sub" style="text-transform:none;letter-spacing:0"> — team goals credited per player</span></h2>
+  <h2>Top scorers <span class="sub" style="text-transform:none;letter-spacing:0"> — individual goals when logged; otherwise team goals credited per player</span></h2>
   <div id="scorers" class="card" style="padding:0;overflow:hidden"></div>
 
   <h2>Fun stats <span class="sub" style="text-transform:none;letter-spacing:0"> — not the official ranking</span></h2>
@@ -316,8 +324,9 @@ function scorerTable(){
   const add=(n,gf,ga)=>{ (s[n]=s[n]||{gf:0,ga:0,gp:0}).gf+=gf; s[n].ga+=ga; s[n].gp++; };
   for(const m of matches){
     if(m.status!=='confirmed' || m.end_type==='void') continue;
-    for(const n of m.side_a) add(n, m.score_a||0, m.score_b||0);
-    for(const n of m.side_b) add(n, m.score_b||0, m.score_a||0);
+    const detailed=m.goal_scorers && typeof m.goal_scorers==='object';
+    for(const n of m.side_a) add(n, detailed?Number(m.goal_scorers[n]||0):(m.score_a||0), m.score_b||0);
+    for(const n of m.side_b) add(n, detailed?Number(m.goal_scorers[n]||0):(m.score_b||0), m.score_a||0);
   }
   return Object.entries(s).map(([n,v])=>({n,...v,gd:v.gf-v.ga})).sort((a,b)=> b.gf-a.gf || b.gd-a.gd);
 }
@@ -464,7 +473,33 @@ function setFmt(f){
   aSelects.forEach((s,i)=> s.style.display = i<cfg.a ? '' : 'none');
   bSelects.forEach((s,i)=> s.style.display = (!aiMode && i<cfg.b) ? '' : 'none');
   aiSide.style.display = aiMode ? '' : 'none';
+  renderGoalInputs();
 }
+function collectGoalInputs(){
+  const values={};
+  document.querySelectorAll('.individual-goal-input').forEach(input=>{
+    values[decodeURIComponent(input.dataset.player)]=Math.max(0,parseInt(input.value)||0);
+  });
+  return values;
+}
+function renderGoalInputs(){
+  if(!logIndividualGoals.checked){ individualGoals.style.display='none'; individualGoals.innerHTML=''; return; }
+  const existing=collectGoalInputs(), cfg=FORMATS[fmt];
+  const A=aSelects.slice(0,cfg.a).map(s=>s.value).filter(Boolean);
+  const B=cfg.b==='AI'?[]:bSelects.slice(0,cfg.b).map(s=>s.value).filter(Boolean);
+  const side=(label,names)=>`<div class="goal-side"><div class="sub">${label} scorers</div>${names.length?names.map(n=>`<label class="goal-entry"><span>${displayName(n)}</span><input class="individual-goal-input" data-player="${encodeURIComponent(n)}" type="number" inputmode="numeric" min="0" value="${existing[n]??0}"></label>`).join(''):'<div class="sub" style="margin-top:6px">No human players</div>'}</div>`;
+  individualGoals.innerHTML=side('Home',A)+side('Away',B);
+  individualGoals.style.display='grid';
+}
+function toggleGoalLogging(){ renderGoalInputs(); }
+function setIndividualGoals(values){
+  renderGoalInputs();
+  document.querySelectorAll('.individual-goal-input').forEach(input=>{
+    const player=decodeURIComponent(input.dataset.player);
+    input.value=values?.[player]??0;
+  });
+}
+function resetGoalLogging(){ logIndividualGoals.checked=false; individualGoals.style.display='none'; individualGoals.innerHTML=''; }
 function checkGate(){
   const sa=starValue('A'), sb2=starValue('B');
   if(sa!=null&&sb2!=null&&Math.abs(sa-sb2)>STAR_GATE){
@@ -483,6 +518,14 @@ async function logGame(){
   const sa=parseInt(sA.value), sb2=parseInt(sB.value);
   if(isNaN(sa)||isNaN(sb2)){ alert('Enter both scores'); return; }
   if(sa<0||sb2<0){ alert('Scores cannot be negative'); return; }
+  let goalScorers=null;
+  if(logIndividualGoals.checked){
+    goalScorers=collectGoalInputs();
+    const homeTotal=A.reduce((sum,n)=>sum+(goalScorers[n]||0),0);
+    const awayTotal=cfg.b==='AI'?sb2:B.reduce((sum,n)=>sum+(goalScorers[n]||0),0);
+    if(homeTotal!==sa){ alert(`Home player goals add up to ${homeTotal}, but the Home score is ${sa}.`); return; }
+    if(cfg.b!=='AI'&&awayTotal!==sb2){ alert(`Away player goals add up to ${awayTotal}, but the Away score is ${sb2}.`); return; }
+  }
   const end=endType.value;
   if(end==='flush'){
     const gd=Math.abs(sa-sb2), min=FLUSH_MIN[fmt]||3;
@@ -502,7 +545,7 @@ async function logGame(){
   const rec={ format:fmt, side_a:A, side_b:B, winner, end_type:end,
     team_a:teamValue('A'), stars_a:starValue('A'),
     team_b:teamValue('B'), stars_b:starValue('B'),
-    score_a:sa, score_b:sb2, pen_a:pa, pen_b:pb };
+    score_a:sa, score_b:sb2, pen_a:pa, pen_b:pb, goal_scorers:goalScorers };
   const {error}=editingMatchId
     ? await sb.from('matches').update(rec).eq('id',editingMatchId)
     : await sb.from('matches').insert({...rec, submitted_by:mePlayer, status:'pending'});
@@ -510,6 +553,7 @@ async function logGame(){
   editingMatchId=null;
   sA.value='0'; sB.value='0'; resetTeamFields(); starsA.value=''; starsB.value='';
   penA.value='0'; penB.value='0'; endType.value='regulation'; togglePen(); gateWarn.style.display='none';
+  resetGoalLogging();
   submitBtn.textContent='Submit result'; editBar.style.display='none';
   await load();
 }
@@ -550,6 +594,8 @@ function editMatch(id){                 // admin only (enforced by RLS)
   const cfg=FORMATS[m.format];
   aSelects.slice(0,cfg.a).forEach((s,i)=>s.value=m.side_a[i]||'');
   if(cfg.b!=='AI') bSelects.slice(0,cfg.b).forEach((s,i)=>s.value=m.side_b[i]||'');
+  logIndividualGoals.checked=!!m.goal_scorers;
+  setIndividualGoals(m.goal_scorers);
   setTeamField('A',m.team_a); setTeamField('B',m.team_b);
   starsA.value=m.stars_a??''; starsB.value=m.stars_b??'';
   sA.value=m.score_a??''; sB.value=m.score_b??'';
@@ -564,6 +610,7 @@ function cancelEdit(){
   submitBtn.textContent='Submit result'; editBar.style.display='none';
   sA.value='0'; sB.value='0'; resetTeamFields(); starsA.value=''; starsB.value='';
   penA.value='0'; penB.value='0'; endType.value='regulation'; togglePen(); gateWarn.style.display='none';
+  resetGoalLogging();
 }
 // only a participant who did NOT submit may confirm
 function canConfirm(m){
@@ -576,6 +623,7 @@ function fillSelects(){
   const opts = players.map(n=>`<option value="${n}">${displayName(n)}</option>`).join('');
   [pA1,pA2,pA3,pA4,pB1,pB2].forEach(sel=>{ const v=sel.value; sel.innerHTML=opts; if(v&&players.includes(v)) sel.value=v; });
   if(players[1] && !pB1.value) pB1.value=players[1];
+  renderGoalInputs();
 }
 const dots = arr => `<span class="form">${arr.map(r=>`<span class="dot ${r}">${r}</span>`).join('')}</span>`;
 // board sort: provisional players sink below established, then by rating
@@ -639,7 +687,9 @@ function profileTimeline(name){
   const goals=[0], goalDiff=[0]; let gf=0,ga=0;
   for(const m of goalMatches){
     const onA=m.side_a.includes(name);
-    gf+=onA?(m.score_a||0):(m.score_b||0); ga+=onA?(m.score_b||0):(m.score_a||0);
+    const detailed=m.goal_scorers && typeof m.goal_scorers==='object';
+    gf+=detailed?Number(m.goal_scorers[name]||0):(onA?(m.score_a||0):(m.score_b||0));
+    ga+=onA?(m.score_b||0):(m.score_a||0);
     goals.push(gf); goalDiff.push(gf-ga);
   }
   return {rating,ratedGames,winRate,odds,goals,goalDiff};
