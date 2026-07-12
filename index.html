@@ -296,7 +296,7 @@ function mostImproved(){
 }
 
 // ---- state ----
-let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histShowAll=false;
+let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histShowAll=false, editingMatchId=null;
 const HIST_PREVIEW=8;
 function toggleHist(){ histShowAll=!histShowAll; render(); }
 // live win odds: average chance to beat a random ranked opponent (excludes self and AI)
@@ -377,24 +377,57 @@ async function logGame(){
   const rec={ format:fmt, side_a:A, side_b:B, winner, end_type:end,
     team_a:teamA.value.trim()||null, stars_a:parseFloat(starsA.value)||null,
     team_b:teamB.value.trim()||null, stars_b:parseFloat(starsB.value)||null,
-    score_a:sa, score_b:sb2, pen_a:pa, pen_b:pb, submitted_by:mePlayer, status:'pending' };
-  const {error}=await sb.from('matches').insert(rec);
+    score_a:sa, score_b:sb2, pen_a:pa, pen_b:pb };
+  const {error}=editingMatchId
+    ? await sb.from('matches').update(rec).eq('id',editingMatchId)
+    : await sb.from('matches').insert({...rec, submitted_by:mePlayer, status:'pending'});
   if(error){ alert(error.message); return; }
+  editingMatchId=null;
   sA.value=''; sB.value=''; teamA.value=''; teamB.value=''; starsA.value=''; starsB.value='';
   penA.value=''; penB.value=''; endType.value='regulation'; togglePen(); gateWarn.style.display='none';
+  submitBtn.textContent='Submit result'; editBar.style.display='none';
   await load();
 }
 function togglePen(){ penRow.style.display = endType.value==='penalties' ? '' : 'none'; }
 async function setStatus(id, status){
-  const {error}=await sb.from('matches').update({status}).eq('id',id);
+  const {error}=await sb.rpc('set_match_status',{match_id:id,new_status:status});
   if(error){ alert(error.message); return; }
   await load();
 }
 async function deleteMatch(id){         // admin only (enforced by RLS)
   if(!confirm('Delete this match permanently? The leaderboard recomputes without it.')) return;
-  const {error}=await sb.from('matches').delete().eq('id',id);
+  const {data,error}=await sb.from('matches').delete().eq('id',id).select('id');
   if(error){ alert(error.message); return; }
+  if(!data || data.length===0){
+    alert('The match was not deleted. Make sure your profile is an admin and run history-controls-migration.sql in Supabase.');
+    return;
+  }
   await load();
+}
+function editMatch(id){                 // admin only (enforced by RLS)
+  if(!meAdmin){ alert('Only an admin can edit match history.'); return; }
+  const m=matches.find(x=>x.id===id);
+  if(!m){ alert('That match could not be found.'); return; }
+  if(!FORMATS[m.format]){ alert(`The format "${m.format}" is not editable in this version.`); return; }
+  editingMatchId=id;
+  setFmt(m.format);
+  const cfg=FORMATS[m.format];
+  aSelects.slice(0,cfg.a).forEach((s,i)=>s.value=m.side_a[i]||'');
+  if(cfg.b!=='AI') bSelects.slice(0,cfg.b).forEach((s,i)=>s.value=m.side_b[i]||'');
+  teamA.value=m.team_a||''; teamB.value=m.team_b||'';
+  starsA.value=m.stars_a??''; starsB.value=m.stars_b??'';
+  sA.value=m.score_a??''; sB.value=m.score_b??'';
+  endType.value=m.end_type||'regulation';
+  penA.value=m.pen_a??''; penB.value=m.pen_b??'';
+  togglePen(); checkGate();
+  submitBtn.textContent='Save changes'; editBar.style.display='';
+  submitBtn.scrollIntoView({behavior:'smooth',block:'center'});
+}
+function cancelEdit(){
+  editingMatchId=null;
+  submitBtn.textContent='Submit result'; editBar.style.display='none';
+  sA.value=''; sB.value=''; teamA.value=''; teamB.value=''; starsA.value=''; starsB.value='';
+  penA.value=''; penB.value=''; endType.value='regulation'; togglePen(); gateWarn.style.display='none';
 }
 // only a participant who did NOT submit may confirm
 function canConfirm(m){
@@ -435,7 +468,8 @@ function gameCard(m, pending){
       <button class="sm ghost" onclick="setStatus(${m.id},'confirmed')">Confirm${meAdmin&&!canConfirm(m)?' (admin)':''}</button>
       <button class="sm ghost" onclick="setStatus(${m.id},'disputed')">Reject</button>`
     : `<span class="sub">Waiting for the other side to confirm</span>`) : '';
-  const adminBtns = meAdmin ? `<button class="sm ghost" style="border-color:var(--loss);color:var(--loss)" onclick="deleteMatch(${m.id})">Delete</button>` : '';
+  const adminBtns = meAdmin ? `<button class="sm ghost" onclick="editMatch(${m.id})">Edit</button>
+    <button class="sm ghost" style="border-color:var(--loss);color:var(--loss)" onclick="deleteMatch(${m.id})">Delete</button>` : '';
   const btns = (confirmBtns||adminBtns) ? `<div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">${confirmBtns}${adminBtns}</div>` : '';
   return `<div class="game ${pending?'pending':''} ${exhibit&&!pending?'exhib':''}">
     <div class="top">
