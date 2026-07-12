@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b7">
+<title>FIFA Ranker</title>
+<style>
+  :root { --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --fg:#e8eaed; --mut:#9aa0aa; --accent:#0b7; --win:#2ea043; --loss:#e5484d; --warn:#d9a441; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font:16px/1.4 -apple-system,system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px 16px 80px; max-width:600px; margin:0 auto; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--mut); margin:24px 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; }
+  input,select,button { font:inherit; color:var(--fg); }
+  input,select { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; width:100%; }
+  button { background:var(--accent); border:0; border-radius:8px; padding:12px; font-weight:600; color:#012; width:100%; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  button.sm { width:auto; padding:7px 12px; font-size:14px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .col { display:flex; flex-direction:column; gap:6px; flex:1; min-width:0; }
+  .muted { color:var(--mut); } .sub { font-size:12px; color:var(--mut); }
+  .banner { background:#3a2a10; border:1px solid var(--warn); color:#f0d9a0; border-radius:10px; padding:12px; margin-bottom:14px; font-size:14px; }
+  .banner code { background:rgba(0,0,0,.3); padding:1px 5px; border-radius:4px; }
+
+  .seg { display:flex; gap:6px; }
+  .seg button { background:var(--bg); border:1px solid var(--line); color:var(--mut); font-weight:600; padding:8px 0; }
+  .seg button.active { background:var(--accent); color:#012; border-color:var(--accent); }
+
+  .rank { display:flex; align-items:center; gap:12px; padding:12px; }
+  .pos { font-size:20px; font-weight:700; width:26px; text-align:center; color:var(--mut); }
+  .pos.gold{color:#f2c94c} .pos.silver{color:#c0c4cc} .pos.bronze{color:#cd7f32}
+  .name { flex:1; font-weight:600; min-width:0; }
+  .rating { font-variant-numeric:tabular-nums; font-weight:700; font-size:18px; }
+  .prov { opacity:.6; }
+  .tag { font-size:10px; text-transform:uppercase; letter-spacing:.4px; background:var(--line); color:var(--mut); padding:2px 6px; border-radius:5px; margin-left:6px; }
+  .form { display:inline-flex; gap:3px; vertical-align:middle; margin-left:4px; }
+  .dot { width:15px; height:15px; border-radius:4px; font-size:9px; line-height:15px; text-align:center; font-weight:700; color:#012; }
+  .dot.W{background:var(--win)} .dot.L{background:var(--loss)} .dot.D{background:var(--warn)}
+
+  .game { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; background:var(--card); }
+  .game .top { display:flex; align-items:center; gap:8px; }
+  .side { flex:1; min-width:0; } .side.r { text-align:right; }
+  .pn { font-weight:600; } .pn.w { color:var(--win); } .pn.l { color:var(--mut); }
+  .tm { font-size:12px; color:var(--mut); }
+  .sc { font-variant-numeric:tabular-nums; font-weight:700; font-size:18px; padding:0 6px; }
+  .meta { font-size:11px; color:var(--mut); margin-top:6px; display:flex; justify-content:space-between; gap:8px; }
+  .pending { border-color:var(--warn); }
+  .exhib { opacity:.55; }
+
+  table.st { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  table.st th, table.st td { padding:8px 10px; text-align:right; font-size:14px; }
+  table.st th { font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--mut); font-weight:600; border-bottom:1px solid var(--line); }
+  table.st td:first-child, table.st th:first-child { text-align:left; }
+  table.st tr:not(:last-child) td { border-bottom:1px solid var(--line); }
+  .authbar { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .authbar .who { flex:1; font-size:14px; }
+  .center { max-width:360px; margin:60px auto 0; text-align:center; }
+</style>
+</head>
+<body>
+<h1>⚽ FIFA Ranker</h1>
+<div class="sub" style="margin-bottom:12px">Shared leaderboard · anyone can submit · the opponent confirms</div>
+
+<div id="setup" class="banner" style="display:none">
+  <b>Not connected yet.</b> Set <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code>
+  at the top of the script. See <code>SETUP.md</code>.
+</div>
+
+<!-- LOGIN -->
+<div id="login" class="center" style="display:none">
+  <h2 style="justify-content:center">Sign in</h2>
+  <div class="card">
+    <input id="loginEmail" type="email" placeholder="you@email.com" autocomplete="email" style="margin-bottom:8px">
+    <button onclick="sendLink()">Email me a login link</button>
+    <div id="loginMsg" class="sub" style="margin-top:8px"></div>
+  </div>
+</div>
+
+<!-- CLAIM IDENTITY (first login) -->
+<div id="claim" class="center" style="display:none">
+  <h2 style="justify-content:center">Which player are you?</h2>
+  <div class="card">
+    <select id="claimSelect" style="margin-bottom:8px"></select>
+    <input id="claimNew" placeholder="…or type a new name" autocomplete="off" style="margin-bottom:8px">
+    <button onclick="claim()">This is me</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none">
+  <div class="authbar">
+    <span class="who">Signed in as <b id="meName"></b></span>
+    <button class="sm ghost" onclick="logout()">Log out</button>
+  </div>
+
+  <div class="card">
+    <div class="row"><input id="newName" placeholder="Add a player to the roster…" autocomplete="off"><button class="sm" onclick="addPlayer()">Add</button></div>
+  </div>
+
+  <h2>Log a game</h2>
+  <div class="card">
+    <div class="seg" style="margin-bottom:12px">
+      <button id="f1" class="active" onclick="setFmt('1v1')">1v1</button>
+      <button id="f12" onclick="setFmt('1v2')">1v2</button>
+      <button id="f2" onclick="setFmt('2v2')">2v2</button>
+    </div>
+    <div class="row" style="margin-bottom:10px; align-items:flex-start">
+      <div class="col">
+        <div class="sub">Side A</div>
+        <select id="pA1"></select>
+        <select id="pA2" style="display:none"></select>
+        <input id="teamA" placeholder="Team name" autocomplete="off">
+        <input id="starsA" type="number" step="0.5" min="0.5" max="5" placeholder="Stars (e.g. 4.5)">
+      </div>
+      <div style="padding-top:26px" class="row">
+        <input class="sc" style="width:48px" id="sA" type="number" inputmode="numeric" placeholder="0">
+        <span class="muted">–</span>
+        <input class="sc" style="width:48px" id="sB" type="number" inputmode="numeric" placeholder="0">
+      </div>
+      <div class="col">
+        <div class="sub">Side B</div>
+        <select id="pB1"></select>
+        <select id="pB2" style="display:none"></select>
+        <input id="teamB" placeholder="Team name" autocomplete="off">
+        <input id="starsB" type="number" step="0.5" min="0.5" max="5" placeholder="Stars (e.g. 4.5)">
+      </div>
+    </div>
+    <select id="endType" style="margin-bottom:10px">
+      <option value="regulation">Full time</option>
+      <option value="extra_time">Extra time</option>
+      <option value="penalties">Penalties (½ weight)</option>
+      <option value="forfeit">Forfeit / rage-quit</option>
+      <option value="void">Void / abandoned</option>
+    </select>
+    <button onclick="logGame()">Submit result</button>
+    <div id="gateWarn" class="sub" style="margin-top:8px;color:var(--warn);display:none"></div>
+  </div>
+
+  <div id="pendingWrap" style="display:none">
+    <h2>Awaiting confirmation</h2>
+    <div id="pending"></div>
+  </div>
+
+  <h2>Leaderboard</h2>
+  <div id="board"></div>
+
+  <h2>Fun stats <span class="sub" style="text-transform:none;letter-spacing:0"> — not the official ranking</span></h2>
+  <div id="stats"></div>
+
+  <h2>History</h2>
+  <div id="hist"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ======= CONFIG — fill these in (see SETUP.md) =======
+const SUPABASE_URL = 'https://lrufmujyrsmcyibfywoc.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_rqZOKtJ7t6Hl_iC3oLaYeA_32bD9_Ix';
+// =====================================================
+
+// ---- rating engine (simplified Elo-blend, §11.11 — unchanged/verified) ----
+const START=1500, LAMBDA=0.65, DELTA_1V2=0, K_PROV=40, K_STD=20, STAR_GATE=0.5, PROV_GAMES=10;
+const sortByR = (names, R) => [...names].sort((a,b)=> R[b].r - R[a].r);
+function sideRating(names, R, isSolo){
+  if(names.length===1) return R[names[0]].r + (isSolo?DELTA_1V2:0);
+  const s = sortByR(names, R);
+  return LAMBDA*R[s[0]].r + (1-LAMBDA)*R[s[1]].r;
+}
+function weightOf(name, names, R){
+  if(names.length===1) return 1;
+  return sortByR(names,R)[0]===name ? LAMBDA : (1-LAMBDA);
+}
+function isRated(m){
+  if(m.status!=='confirmed' || m.end_type==='void') return false;
+  if(m.stars_a!=null && m.stars_b!=null && Math.abs(m.stars_a-m.stars_b)>STAR_GATE) return false;
+  return true;
+}
+function computeRatings(players, matches){
+  const R={};
+  const ensure = n => { if(!R[n]) R[n]={r:START, games:0, played:0}; };
+  players.forEach(p=>ensure(p));
+  const chron=[...matches].sort((a,b)=> new Date(a.created_at)-new Date(b.created_at));
+  for(const m of chron){
+    const A=m.side_a, B=m.side_b;
+    [...A,...B].forEach(ensure);
+    [...A,...B].forEach(n=> R[n].played++);
+    if(!isRated(m)) continue;
+    const soloA=A.length===1 && B.length===2, soloB=B.length===1 && A.length===2;
+    const RA=sideRating(A,R,soloA), RB=sideRating(B,R,soloB);
+    const EA=1/(1+Math.pow(10,(RB-RA)/400));
+    const resA = m.winner==='A'?1 : m.winner==='draw'?0.5 : 0;
+    const mw = m.end_type==='penalties'?0.5:1;
+    const upd={};
+    for(const n of A){ const k=R[n].games<PROV_GAMES?K_PROV:K_STD; upd[n]=weightOf(n,A,R)*k*mw*(resA-EA); }
+    for(const n of B){ const k=R[n].games<PROV_GAMES?K_PROV:K_STD; upd[n]=weightOf(n,B,R)*k*mw*((resA-EA)*-1); }
+    for(const n in upd){ R[n].r+=upd[n]; R[n].games++; }
+  }
+  return R;
+}
+
+// ---- fun stats (entertainment layer, §8 — based on rated games only) ----
+const ratedMatches = () => matches.filter(isRated);
+const sideOf = (m,n) => m.side_a.includes(n)?'A' : m.side_b.includes(n)?'B' : null;
+const resultForSide = (m,s) => m.winner==='draw'?'D' : m.winner===s?'W':'L';
+
+function formOf(name){
+  const r=[];
+  for(const m of [...ratedMatches()].reverse()){
+    const s=sideOf(m,name); if(!s) continue;
+    r.push(resultForSide(m,s)); if(r.length>=5) break;
+  }
+  return r;
+}
+function partnerships(){
+  const p={};
+  for(const m of ratedMatches()) for(const side of [['A',m.side_a],['B',m.side_b]]){
+    if(side[1].length!==2) continue;
+    const key=[...side[1]].sort().join(' & ');
+    (p[key]=p[key]||{w:0,l:0,d:0,g:0}).g++;
+    const res=resultForSide(m,side[0]); p[key][res==='W'?'w':res==='L'?'l':'d']++;
+  }
+  return Object.entries(p).map(([k,v])=>({k,...v,wr:(v.w+v.d*0.5)/v.g}))
+    .filter(x=>x.g>=2).sort((a,b)=> b.wr-a.wr || b.g-a.g);
+}
+function carryIndex(name, R){
+  let strong=0, tot=0;
+  for(const m of ratedMatches()) for(const side of [m.side_a,m.side_b]){
+    if(side.length===2 && side.includes(name)){
+      tot++; const mate=side.find(x=>x!==name);
+      if(R[name].r >= R[mate].r) strong++;
+    }
+  }
+  return tot? {pct:strong/tot, tot} : null;
+}
+function h2h(name){
+  const rec={};
+  for(const m of ratedMatches()){
+    const s=sideOf(m,name); if(!s) continue;
+    const opp = s==='A'?m.side_b:m.side_a, res=resultForSide(m,s);
+    for(const o of opp){ (rec[o]=rec[o]||{w:0,l:0,d:0})[res==='W'?'w':res==='L'?'l':'d']++; }
+  }
+  return rec;
+}
+function mostImproved(){
+  const weekAgo = Date.now() - 7*86400000;
+  const past = matches.filter(m=> new Date(m.created_at).getTime() < weekAgo);
+  if(!past.length) return null;
+  const now=computeRatings(players,matches), then=computeRatings(players,past);
+  let best=null;
+  for(const n of players){
+    if(!then[n]||!now[n]||then[n].games===0) continue;
+    const d=now[n].r-then[n].r;
+    if(!best||d>best.d) best={n,d};
+  }
+  return best && best.d>0.5 ? best : null;
+}
+
+// ---- state ----
+let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null;
+const $ = id => document.getElementById(id);
+
+async function load(){
+  const [{data:pl}, {data:ms}] = await Promise.all([
+    sb.from('players').select('*'),
+    sb.from('matches').select('*').order('created_at'),
+  ]);
+  players = (pl||[]).map(p=>p.name);
+  matches = ms||[];
+  render();
+}
+
+async function addPlayer(){
+  const el=$('newName'), name=el.value.trim();
+  if(!name) return;
+  if(players.includes(name)){ alert('Already on the roster'); return; }
+  const {error}=await sb.from('players').insert({name});
+  if(error){ alert(error.message); return; }
+  el.value=''; await load();
+}
+
+function setFmt(f){
+  fmt=f;
+  f1.classList.toggle('active',f==='1v1'); f12.classList.toggle('active',f==='1v2'); f2.classList.toggle('active',f==='2v2');
+  pA2.style.display = f==='2v2' ? '' : 'none';
+  pB2.style.display = (f==='1v2'||f==='2v2') ? '' : 'none';
+}
+function checkGate(){
+  const sa=parseFloat(starsA.value), sb2=parseFloat(starsB.value);
+  if(!isNaN(sa)&&!isNaN(sb2)&&Math.abs(sa-sb2)>STAR_GATE){
+    gateWarn.style.display=''; gateWarn.textContent=`Star gap ${Math.abs(sa-sb2)} > ${STAR_GATE} — logged as EXHIBITION (won't count).`;
+  } else gateWarn.style.display='none';
+}
+
+async function logGame(){
+  const A = fmt==='2v2' ? [pA1.value,pA2.value] : [pA1.value];
+  const B = (fmt==='1v2'||fmt==='2v2') ? [pB1.value,pB2.value] : [pB1.value];
+  const all=[...A,...B];
+  if(all.some(x=>!x)){ alert('Pick all players'); return; }
+  if(new Set(all).size!==all.length){ alert('Each player can appear once'); return; }
+  const sa=parseInt(sA.value), sb2=parseInt(sB.value);
+  if(isNaN(sa)||isNaN(sb2)){ alert('Enter both scores'); return; }
+  const end=endType.value;
+  const winner = end==='void' ? 'A' : sa>sb2?'A':sa<sb2?'B':'draw';
+  const rec={ format:fmt, side_a:A, side_b:B, winner, end_type:end,
+    team_a:teamA.value.trim()||null, stars_a:parseFloat(starsA.value)||null,
+    team_b:teamB.value.trim()||null, stars_b:parseFloat(starsB.value)||null,
+    score_a:sa, score_b:sb2, submitted_by:mePlayer, status:'pending' };
+  const {error}=await sb.from('matches').insert(rec);
+  if(error){ alert(error.message); return; }
+  sA.value=''; sB.value=''; teamA.value=''; teamB.value=''; starsA.value=''; starsB.value=''; gateWarn.style.display='none';
+  await load();
+}
+async function setStatus(id, status){
+  const {error}=await sb.from('matches').update({status}).eq('id',id);
+  if(error){ alert(error.message); return; }
+  await load();
+}
+// only a participant who did NOT submit may confirm
+function canConfirm(m){
+  const inMatch = m.side_a.includes(mePlayer) || m.side_b.includes(mePlayer);
+  return inMatch && m.submitted_by !== mePlayer;
+}
+
+// ---- render ----
+function fillSelects(){
+  const opts = players.map(n=>`<option>${n}</option>`).join('');
+  [pA1,pA2,pB1,pB2].forEach(sel=>{ const v=sel.value; sel.innerHTML=opts; if(v&&players.includes(v)) sel.value=v; });
+  if(players[1] && !pB1.value) pB1.value=players[1];
+}
+const dots = arr => `<span class="form">${arr.map(r=>`<span class="dot ${r}">${r}</span>`).join('')}</span>`;
+
+function gameCard(m, pending){
+  const A=m.side_a.join(' & '), B=m.side_b.join(' & ');
+  const aw=m.winner==='A', bw=m.winner==='B';
+  const when=new Date(m.created_at).toLocaleDateString([], {month:'short',day:'numeric'});
+  const exhibit = m.stars_a!=null && m.stars_b!=null && Math.abs(m.stars_a-m.stars_b)>STAR_GATE;
+  const flags=[m.format];
+  if(m.end_type==='penalties') flags.push('pens');
+  if(m.end_type==='extra_time') flags.push('ET');
+  if(m.end_type==='forfeit') flags.push('forfeit');
+  if(m.end_type==='void') flags.push('void');
+  if(exhibit) flags.push('exhibition');
+  const teamLine=(t,s)=> t? `${t}${s!=null?' '+s+'★':''}` : (s!=null?s+'★':'—');
+  const btns = pending ? (canConfirm(m) ? `<div class="row" style="margin-top:8px;gap:6px">
+      <button class="sm ghost" onclick="setStatus(${m.id},'confirmed')">Confirm</button>
+      <button class="sm ghost" onclick="setStatus(${m.id},'disputed')">Dispute</button>
+    </div>` : `<div class="sub" style="margin-top:8px">Waiting for the other side to confirm</div>`) : '';
+  return `<div class="game ${pending?'pending':''} ${exhibit&&!pending?'exhib':''}">
+    <div class="top">
+      <div class="side"><div class="pn ${aw?'w':'l'}">${A}</div><div class="tm">${teamLine(m.team_a,m.stars_a)}</div></div>
+      <span class="sc">${m.score_a??''}</span><span class="muted">–</span><span class="sc">${m.score_b??''}</span>
+      <div class="side r"><div class="pn ${bw?'w':'l'}">${B}</div><div class="tm">${teamLine(m.team_b,m.stars_b)}</div></div>
+    </div>
+    <div class="meta"><span>${when} · ${flags.join(' · ')}</span><span>${m.submitted_by?'by '+m.submitted_by:''}</span></div>
+    ${btns}
+  </div>`;
+}
+
+function render(){
+  fillSelects();
+  const R=computeRatings(players, matches);
+
+  const rows=Object.entries(R).map(([n,v])=>({n,...v})).filter(x=>players.includes(x.n)||x.played>0);
+  rows.sort((a,b)=>{ const ap=a.games<PROV_GAMES, bp=b.games<PROV_GAMES; if(ap!==bp) return ap?1:-1; return b.r-a.r; });
+  const medal=['gold','silver','bronze']; let est=0;
+  board.innerHTML = rows.length ? rows.map(x=>{
+    const prov=x.games<PROV_GAMES; if(!prov) est++;
+    const ci=carryIndex(x.n,R);
+    const carry = ci ? ` · carry ${Math.round(ci.pct*100)}%` : '';
+    return `<div class="card rank ${prov?'prov':''}">
+      <span class="pos ${prov?'':medal[est-1]||''}">${prov?'·':est}</span>
+      <div class="name">${x.n}${prov?`<span class="tag">provisional</span>`:''}
+        <div class="sub">${x.games} rated${prov?` · need ${PROV_GAMES-x.games} more`:''}${carry}${formOf(x.n).length?' '+dots(formOf(x.n)):''}</div>
+      </div>
+      <span class="rating">${Math.round(x.r)}</span>
+    </div>`;
+  }).join('') : '<div class="card sub">Add players and log a game.</div>';
+
+  // fun stats
+  const parts=partnerships(), imp=mostImproved(), myRec=mePlayer?h2h(mePlayer):{};
+  const partHtml = parts.length ? `<div class="card"><b class="sub">Best partnerships</b><table class="st">
+    <tr><th>Duo</th><th>Record</th><th>Win%</th></tr>
+    ${parts.slice(0,5).map(x=>`<tr><td>${x.k}</td><td>${x.w}-${x.l}${x.d?'-'+x.d:''}</td><td>${Math.round(x.wr*100)}%</td></tr>`).join('')}
+  </table></div>` : '';
+  const impHtml = imp ? `<div class="card"><b class="sub">📈 Most improved this week</b><div style="margin-top:4px">${imp.n} <span class="rating" style="color:var(--win)">+${Math.round(imp.d)}</span></div></div>` : '';
+  const myOpps=Object.entries(myRec);
+  const h2hHtml = myOpps.length ? `<div class="card"><b class="sub">Your head-to-head (${mePlayer})</b><table class="st">
+    <tr><th>Opponent</th><th>W</th><th>D</th><th>L</th></tr>
+    ${myOpps.sort((a,b)=>(b[1].w+b[1].l+b[1].d)-(a[1].w+a[1].l+a[1].d)).map(([o,v])=>`<tr><td>${o}</td><td>${v.w}</td><td>${v.d}</td><td>${v.l}</td></tr>`).join('')}
+  </table></div>` : '';
+  const stats = partHtml+impHtml+h2hHtml;
+  $('stats').innerHTML = stats || '<div class="card sub">Play some games to unlock stats.</div>';
+
+  const pend=matches.filter(m=>m.status==='pending');
+  $('pendingWrap').style.display = pend.length?'':'none';
+  $('pending').innerHTML = pend.map(m=>gameCard(m,true)).join('');
+  const done=matches.filter(m=>m.status!=='pending').slice().reverse();
+  hist.innerHTML = done.length ? done.map(m=>gameCard(m,false)).join('') : '<div class="card sub">No confirmed games yet.</div>';
+}
+
+// ---- auth ----
+function show(view){ ['setup','login','claim','app'].forEach(v=>$(v).style.display = v===view?'':'none'); }
+async function sendLink(){
+  const email=$('loginEmail').value.trim(); if(!email) return;
+  const {error}=await sb.auth.signInWithOtp({ email, options:{ emailRedirectTo: location.href } });
+  $('loginMsg').textContent = error ? error.message : 'Check your email for the login link, then reopen this page.';
+}
+async function logout(){ await sb.auth.signOut(); mePlayer=null; show('login'); }
+
+async function handleAuth(session){
+  if(!session){ show('login'); return; }
+  const uid = session.user.id;
+  const {data:prof} = await sb.from('profiles').select('player').eq('id',uid).maybeSingle();
+  if(prof){ mePlayer=prof.player; $('meName').textContent=mePlayer; show('app'); await load(); return; }
+  // first login -> claim a name
+  const [{data:pl},{data:profs}] = await Promise.all([ sb.from('players').select('name'), sb.from('profiles').select('player') ]);
+  const claimed=new Set((profs||[]).map(p=>p.player));
+  const free=(pl||[]).map(p=>p.name).filter(n=>!claimed.has(n));
+  $('claimSelect').innerHTML = `<option value="">— pick an existing name —</option>`+free.map(n=>`<option>${n}</option>`).join('');
+  show('claim');
+}
+async function claim(){
+  const chosen = $('claimNew').value.trim() || $('claimSelect').value;
+  if(!chosen){ alert('Pick or type a name'); return; }
+  const {data:{user}} = await sb.auth.getUser();
+  const {data:existing} = await sb.from('players').select('name').eq('name',chosen).maybeSingle();
+  if(!existing){ const {error}=await sb.from('players').insert({name:chosen}); if(error){ alert(error.message); return; } }
+  const {error}=await sb.from('profiles').insert({ id:user.id, player:chosen });
+  if(error){ alert(error.message); return; }
+  mePlayer=chosen; $('meName').textContent=mePlayer; show('app'); await load();
+}
+
+// ---- self-check (engine; console asserts on load) ----
+(function(){
+  const A=(c,m)=>console.assert(c,'CHECK FAIL: '+m);
+  let i=0; const mk=(sa,sb,a,b,x={})=>({status:'confirmed',end_type:'regulation',created_at:new Date(2020,0,++i).toISOString(),side_a:a,side_b:b,winner:sa>sb?'A':sa<sb?'B':'draw',score_a:sa,score_b:sb,...x});
+  let R=computeRatings(['X','Y'],[mk(2,1,['X'],['Y'])]);
+  A(Math.abs(R.X.r-1520)<1e-6 && Math.abs(R.Y.r-1480)<1e-6,'1v1 win ±20');
+  let R2=computeRatings(['S','W','O1','O2'],[mk(2,1,['S','W'],['O1','O2'])]);
+  A(R2.S.r-1500 > R2.W.r-1500 && R2.W.r>1500,'carry weighting');
+  let R3=computeRatings(['P','Q'],[mk(3,0,['P'],['Q'],{stars_a:5,stars_b:4})]);
+  A(Math.abs(R3.P.r-1500)<1e-9,'star gate');
+})();
+
+// ---- boot ----
+if(SUPABASE_URL.startsWith('YOUR_') || SUPABASE_ANON_KEY.startsWith('YOUR_')){
+  show('setup');
+} else {
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  starsA.addEventListener('input',checkGate); starsB.addEventListener('input',checkGate);
+  sb.auth.getSession().then(({data})=>handleAuth(data.session));
+  sb.auth.onAuthStateChange((_e,session)=>handleAuth(session));
+  sb.channel('any').on('postgres_changes',{event:'*',schema:'public'}, ()=>{ if(mePlayer) load(); }).subscribe();
+}
+</script>
+</body>
+</html>
