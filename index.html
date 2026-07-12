@@ -95,15 +95,19 @@
   <h2>Log a game</h2>
   <div class="card">
     <div class="seg" style="margin-bottom:12px">
-      <button id="f1" class="active" onclick="setFmt('1v1')">1v1</button>
-      <button id="f12" onclick="setFmt('1v2')">1v2</button>
-      <button id="f2" onclick="setFmt('2v2')">2v2</button>
+      <button data-f="1v1" class="active" onclick="setFmt('1v1')">1v1</button>
+      <button data-f="1v2" onclick="setFmt('1v2')">1v2</button>
+      <button data-f="2v2" onclick="setFmt('2v2')">2v2</button>
+      <button data-f="3v1" onclick="setFmt('3v1')">3v1</button>
+      <button data-f="4vAI" onclick="setFmt('4vAI')">4vAI</button>
     </div>
     <div class="row" style="margin-bottom:10px; align-items:flex-start">
       <div class="col">
         <div class="sub">Side A</div>
         <select id="pA1"></select>
         <select id="pA2" style="display:none"></select>
+        <select id="pA3" style="display:none"></select>
+        <select id="pA4" style="display:none"></select>
         <input id="teamA" placeholder="Team name" autocomplete="off">
         <input id="starsA" type="number" step="0.5" min="0.5" max="5" placeholder="Stars (e.g. 4.5)">
       </div>
@@ -116,6 +120,7 @@
         <div class="sub">Side B</div>
         <select id="pB1"></select>
         <select id="pB2" style="display:none"></select>
+        <div id="aiSide" style="display:none;font-weight:600;padding:10px 0">🤖 AI</div>
         <input id="teamB" placeholder="Team name" autocomplete="off">
         <input id="starsB" type="number" step="0.5" min="0.5" max="5" placeholder="Stars (e.g. 4.5)">
       </div>
@@ -156,14 +161,16 @@ const SUPABASE_ANON_KEY = 'sb_publishable_rqZOKtJ7t6Hl_iC3oLaYeA_32bD9_Ix';
 // ---- rating engine (simplified Elo-blend, §11.11 — unchanged/verified) ----
 const START=1500, LAMBDA=0.65, DELTA_1V2=0, K_PROV=40, K_STD=20, STAR_GATE=0.5, PROV_GAMES=10;
 const sortByR = (names, R) => [...names].sort((a,b)=> R[b].r - R[a].r);
+// team strength: strongest player carries LAMBDA, the rest split (1-LAMBDA) equally.
+// (2 players -> LAMBDA/1-LAMBDA, same as before; generalizes to 3- and 4-player teams.)
 function sideRating(names, R, isSolo){
   if(names.length===1) return R[names[0]].r + (isSolo?DELTA_1V2:0);
-  const s = sortByR(names, R);
-  return LAMBDA*R[s[0]].r + (1-LAMBDA)*R[s[1]].r;
+  const s = sortByR(names, R), w=(1-LAMBDA)/(names.length-1);
+  return s.reduce((sum,n,i)=> sum + (i===0?LAMBDA:w)*R[n].r, 0);
 }
 function weightOf(name, names, R){
   if(names.length===1) return 1;
-  return sortByR(names,R)[0]===name ? LAMBDA : (1-LAMBDA);
+  return sortByR(names,R)[0]===name ? LAMBDA : (1-LAMBDA)/(names.length-1);
 }
 function isRated(m){
   if(m.status!=='confirmed' || m.end_type==='void') return false;
@@ -180,7 +187,7 @@ function computeRatings(players, matches){
     [...A,...B].forEach(ensure);
     [...A,...B].forEach(n=> R[n].played++);
     if(!isRated(m)) continue;
-    const soloA=A.length===1 && B.length===2, soloB=B.length===1 && A.length===2;
+    const soloA=A.length===1 && B.length>1, soloB=B.length===1 && A.length>1;
     const RA=sideRating(A,R,soloA), RB=sideRating(B,R,soloB);
     const EA=1/(1+Math.pow(10,(RB-RA)/400));
     const resA = m.winner==='A'?1 : m.winner==='draw'?0.5 : 0;
@@ -273,11 +280,16 @@ async function addPlayer(){
   $('newName').value=''; $('newEmail').value=''; await load();
 }
 
+// per-format side sizes. b:'AI' means side B is the fixed AI player.
+const FORMATS = { '1v1':{a:1,b:1}, '1v2':{a:1,b:2}, '2v2':{a:2,b:2}, '3v1':{a:3,b:1}, '4vAI':{a:4,b:'AI'} };
+const aSelects=[pA1,pA2,pA3,pA4], bSelects=[pB1,pB2];
 function setFmt(f){
   fmt=f;
-  f1.classList.toggle('active',f==='1v1'); f12.classList.toggle('active',f==='1v2'); f2.classList.toggle('active',f==='2v2');
-  pA2.style.display = f==='2v2' ? '' : 'none';
-  pB2.style.display = (f==='1v2'||f==='2v2') ? '' : 'none';
+  document.querySelectorAll('.seg button').forEach(b=> b.classList.toggle('active', b.dataset.f===f));
+  const cfg=FORMATS[f], aiMode=cfg.b==='AI';
+  aSelects.forEach((s,i)=> s.style.display = i<cfg.a ? '' : 'none');
+  bSelects.forEach((s,i)=> s.style.display = (!aiMode && i<cfg.b) ? '' : 'none');
+  aiSide.style.display = aiMode ? '' : 'none';
 }
 function checkGate(){
   const sa=parseFloat(starsA.value), sb2=parseFloat(starsB.value);
@@ -287,10 +299,12 @@ function checkGate(){
 }
 
 async function logGame(){
-  const A = fmt==='2v2' ? [pA1.value,pA2.value] : [pA1.value];
-  const B = (fmt==='1v2'||fmt==='2v2') ? [pB1.value,pB2.value] : [pB1.value];
+  const cfg=FORMATS[fmt];
+  const A = aSelects.slice(0,cfg.a).map(s=>s.value);
+  const B = cfg.b==='AI' ? ['AI'] : bSelects.slice(0,cfg.b).map(s=>s.value);
   const all=[...A,...B];
   if(all.some(x=>!x)){ alert('Pick all players'); return; }
+  if(cfg.b==='AI' && !players.includes('AI')){ alert('Add a roster player named "AI" first (admin).'); return; }
   if(new Set(all).size!==all.length){ alert('Each player can appear once'); return; }
   const sa=parseInt(sA.value), sb2=parseInt(sB.value);
   if(isNaN(sa)||isNaN(sb2)){ alert('Enter both scores'); return; }
@@ -325,7 +339,7 @@ function canConfirm(m){
 // ---- render ----
 function fillSelects(){
   const opts = players.map(n=>`<option>${n}</option>`).join('');
-  [pA1,pA2,pB1,pB2].forEach(sel=>{ const v=sel.value; sel.innerHTML=opts; if(v&&players.includes(v)) sel.value=v; });
+  [pA1,pA2,pA3,pA4,pB1,pB2].forEach(sel=>{ const v=sel.value; sel.innerHTML=opts; if(v&&players.includes(v)) sel.value=v; });
   if(players[1] && !pB1.value) pB1.value=players[1];
 }
 const dots = arr => `<span class="form">${arr.map(r=>`<span class="dot ${r}">${r}</span>`).join('')}</span>`;
@@ -440,6 +454,9 @@ async function handleAuth(session){
   A(R2.S.r-1500 > R2.W.r-1500 && R2.W.r>1500,'carry weighting');
   let R3=computeRatings(['P','Q'],[mk(3,0,['P'],['Q'],{stars_a:5,stars_b:4})]);
   A(Math.abs(R3.P.r-1500)<1e-9,'star gate');
+  // 3v1: trio beats solo; trio weights sum to 1 (zero-sum overall), strongest of trio moves most
+  let R4=computeRatings(['t1','t2','t3','solo'],[mk(2,1,['t1','t2','t3'],['solo'])]);
+  A(Math.abs((R4.t1.r+R4.t2.r+R4.t3.r+R4.solo.r)-6000)<1e-6,'3v1 zero-sum');
 })();
 
 // ---- boot ----
