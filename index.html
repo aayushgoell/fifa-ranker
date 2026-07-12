@@ -164,7 +164,7 @@
         <div id="starsBDisplay" class="star-display" style="display:none" aria-label="5 stars">★★★★★</div>
       </div>
     </div>
-    <label class="row" style="margin-bottom:10px;cursor:pointer">
+    <label id="goalLoggingOption" class="row" style="display:none;margin-bottom:10px;cursor:pointer">
       <input id="logIndividualGoals" type="checkbox" onchange="toggleGoalLogging()" style="width:auto">
       <span>Log individual goals</span>
     </label>
@@ -473,6 +473,8 @@ function setFmt(f){
   aSelects.forEach((s,i)=> s.style.display = i<cfg.a ? '' : 'none');
   bSelects.forEach((s,i)=> s.style.display = (!aiMode && i<cfg.b) ? '' : 'none');
   aiSide.style.display = aiMode ? '' : 'none';
+  goalLoggingOption.style.display=f==='1v1'?'none':'flex';
+  if(f==='1v1') resetGoalLogging();
   renderGoalInputs();
 }
 function collectGoalInputs(){
@@ -519,7 +521,7 @@ async function logGame(){
   if(isNaN(sa)||isNaN(sb2)){ alert('Enter both scores'); return; }
   if(sa<0||sb2<0){ alert('Scores cannot be negative'); return; }
   let goalScorers=null;
-  if(logIndividualGoals.checked){
+  if(logIndividualGoals.checked&&fmt!=='1v1'){
     goalScorers=collectGoalInputs();
     const homeTotal=A.reduce((sum,n)=>sum+(goalScorers[n]||0),0);
     const awayTotal=cfg.b==='AI'?sb2:B.reduce((sum,n)=>sum+(goalScorers[n]||0),0);
@@ -594,7 +596,7 @@ function editMatch(id){                 // admin only (enforced by RLS)
   const cfg=FORMATS[m.format];
   aSelects.slice(0,cfg.a).forEach((s,i)=>s.value=m.side_a[i]||'');
   if(cfg.b!=='AI') bSelects.slice(0,cfg.b).forEach((s,i)=>s.value=m.side_b[i]||'');
-  logIndividualGoals.checked=!!m.goal_scorers;
+  logIndividualGoals.checked=m.format!=='1v1'&&!!m.goal_scorers;
   setIndividualGoals(m.goal_scorers);
   setTeamField('A',m.team_a); setTeamField('B',m.team_b);
   starsA.value=m.stars_a??''; starsB.value=m.stars_b??'';
