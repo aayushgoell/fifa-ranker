@@ -77,15 +77,8 @@
   </div>
 </div>
 
-<!-- CLAIM IDENTITY (first login) -->
-<div id="claim" class="center" style="display:none">
-  <h2 style="justify-content:center">Which player are you?</h2>
-  <div class="card">
-    <select id="claimSelect" style="margin-bottom:8px"></select>
-    <input id="claimNew" placeholder="…or type a new name" autocomplete="off" style="margin-bottom:8px">
-    <button onclick="claim()">This is me</button>
-  </div>
-</div>
+<!-- NOT ON ROSTER (first login, email not linked) -->
+<div id="claim" class="center" style="display:none"></div>
 
 <!-- APP -->
 <div id="app" style="display:none">
@@ -94,8 +87,9 @@
     <button class="sm ghost" onclick="logout()">Log out</button>
   </div>
 
-  <div class="card">
-    <div class="row"><input id="newName" placeholder="Add a player to the roster…" autocomplete="off"><button class="sm" onclick="addPlayer()">Add</button></div>
+  <div class="card" id="rosterCard" style="display:none">
+    <div class="sub" style="margin-bottom:8px">Admin: add a player — their name is locked to this email.</div>
+    <div class="row"><input id="newName" placeholder="Player name" autocomplete="off"><input id="newEmail" type="email" placeholder="their@email.com" autocomplete="off"><button class="sm" onclick="addPlayer()">Add</button></div>
   </div>
 
   <h2>Log a game</h2>
@@ -271,12 +265,12 @@ async function load(){
 }
 
 async function addPlayer(){
-  const el=$('newName'), name=el.value.trim();
-  if(!name) return;
+  const name=$('newName').value.trim(), email=$('newEmail').value.trim().toLowerCase();
+  if(!name || !email){ alert('Enter both a name and their email'); return; }
   if(players.includes(name)){ alert('Already on the roster'); return; }
-  const {error}=await sb.from('players').insert({name});
+  const {error}=await sb.from('players').insert({name, email});
   if(error){ alert(error.message); return; }
-  el.value=''; await load();
+  $('newName').value=''; $('newEmail').value=''; await load();
 }
 
 function setFmt(f){
@@ -367,6 +361,7 @@ function gameCard(m, pending){
 
 function render(){
   fillSelects();
+  $('rosterCard').style.display = meAdmin ? '' : 'none';
   const R=computeRatings(players, matches);
 
   const rows=Object.entries(R).map(([n,v])=>({n,...v})).filter(x=>players.includes(x.n)||x.played>0);
@@ -418,25 +413,21 @@ async function logout(){ await sb.auth.signOut(); mePlayer=null; meAdmin=false; 
 
 async function handleAuth(session){
   if(!session){ show('login'); return; }
-  const uid = session.user.id;
+  const uid = session.user.id, email = (session.user.email||'').toLowerCase();
   const {data:prof} = await sb.from('profiles').select('player, is_admin').eq('id',uid).maybeSingle();
   if(prof){ mePlayer=prof.player; meAdmin=!!prof.is_admin; $('meName').textContent=mePlayer+(meAdmin?' (admin)':''); show('app'); await load(); return; }
-  // first login -> claim a name
-  const [{data:pl},{data:profs}] = await Promise.all([ sb.from('players').select('name'), sb.from('profiles').select('player') ]);
-  const claimed=new Set((profs||[]).map(p=>p.player));
-  const free=(pl||[]).map(p=>p.name).filter(n=>!claimed.has(n));
-  $('claimSelect').innerHTML = `<option value="">— pick an existing name —</option>`+free.map(n=>`<option>${n}</option>`).join('');
+  // first login -> auto-assign the roster player whose email matches (no name-picking = no impersonation)
+  const {data:mine} = await sb.from('players').select('name').ilike('email', email).maybeSingle();
+  if(mine){
+    const {error} = await sb.from('profiles').insert({ id:uid, player:mine.name });
+    if(error){ $('claim').innerHTML = `<div class="card">Couldn't link your account: ${error.message}</div>`; show('claim'); return; }
+    mePlayer=mine.name; meAdmin=false; $('meName').textContent=mePlayer; show('app'); await load(); return;
+  }
+  // email not on the roster
+  $('claim').innerHTML = `<h2 style="justify-content:center">Not on the roster</h2>
+    <div class="card">Your email <b>${email}</b> isn't linked to a player yet. Ask the admin to add you (they'll enter this exact email), then sign in again.
+    <div style="margin-top:10px"><button class="sm ghost" onclick="logout()">Log out</button></div></div>`;
   show('claim');
-}
-async function claim(){
-  const chosen = $('claimNew').value.trim() || $('claimSelect').value;
-  if(!chosen){ alert('Pick or type a name'); return; }
-  const {data:{user}} = await sb.auth.getUser();
-  const {data:existing} = await sb.from('players').select('name').eq('name',chosen).maybeSingle();
-  if(!existing){ const {error}=await sb.from('players').insert({name:chosen}); if(error){ alert(error.message); return; } }
-  const {error}=await sb.from('profiles').insert({ id:user.id, player:chosen });
-  if(error){ alert(error.message); return; }
-  mePlayer=chosen; $('meName').textContent=mePlayer; show('app'); await load();
 }
 
 // ---- self-check (engine; console asserts on load) ----
