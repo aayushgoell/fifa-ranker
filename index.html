@@ -64,6 +64,11 @@
   .center { max-width:360px; margin:60px auto 0; text-align:center; }
   .modal-backdrop { position:fixed; inset:0; z-index:100; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(0,0,0,.72); }
   .modal-backdrop .card { width:100%; max-width:360px; margin:0; box-shadow:0 18px 50px rgba(0,0,0,.45); }
+  .profile-link { width:auto; padding:0; border:0; background:transparent; color:var(--fg); text-align:left; font-weight:700; }
+  .profile-link:hover { color:var(--accent); text-decoration:underline; }
+  .profile-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .profile-stat { margin:0; text-align:center; }
+  .profile-stat .rating { display:block; margin-top:3px; }
 </style>
 </head>
 <body>
@@ -95,6 +100,8 @@
     <button class="sm ghost" id="themeBtn" onclick="toggleTheme()" title="Toggle light/dark">☀️</button>
     <button class="sm ghost" onclick="logout()">Log out</button>
   </div>
+
+  <div id="mainView">
 
   <div class="card" id="rosterCard" style="display:none">
     <div class="sub" style="margin-bottom:8px">Admin: add a player — their name is locked to this email.</div>
@@ -171,6 +178,12 @@
 
   <h2>History</h2>
   <div id="hist"></div>
+  </div>
+
+  <div id="profileView" style="display:none">
+    <button class="sm ghost" onclick="closeProfile()" style="margin-bottom:10px">← Back to leaderboard</button>
+    <div id="profileContent"></div>
+  </div>
 </div>
 
 <div id="deleteModal" class="modal-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
@@ -311,10 +324,13 @@ function mostImproved(){
 }
 
 // ---- state ----
-let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histExpanded=false, histPage=1, editingMatchId=null, deletingMatchId=null;
+let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histExpanded=false, histPage=1, profilePlayer=null, profilePage=1, editingMatchId=null, deletingMatchId=null;
 const HIST_PREVIEW=3, HIST_PAGE_SIZE=5;
 function toggleHist(){ histExpanded=!histExpanded; histPage=1; render(); }
 function setHistPage(page){ histPage=page; render(); hist.scrollIntoView({behavior:'smooth',block:'start'}); }
+function openProfile(name){ profilePlayer=name; profilePage=1; mainView.style.display='none'; profileView.style.display=''; renderProfile(); scrollTo({top:0,behavior:'smooth'}); }
+function closeProfile(){ profilePlayer=null; profileView.style.display='none'; mainView.style.display=''; scrollTo({top:0,behavior:'smooth'}); }
+function setProfilePage(page){ profilePage=page; renderProfile(); profileContent.scrollIntoView({behavior:'smooth',block:'start'}); }
 // live win odds: average chance to beat a random ranked opponent (excludes self and AI)
 function winOdds(name, R){
   const rp=R[name] && R[name].r; if(rp==null) return null;
@@ -457,6 +473,7 @@ function editMatch(id){                 // admin only (enforced by RLS)
   const m=matches.find(x=>x.id===id);
   if(!m){ alert('That match could not be found.'); return; }
   if(!FORMATS[m.format]){ alert(`The format "${m.format}" is not editable in this version.`); return; }
+  if(profilePlayer) closeProfile();
   editingMatchId=id;
   setFmt(m.format);
   const cfg=FORMATS[m.format];
@@ -530,6 +547,49 @@ function gameCard(m, pending){
   </div>`;
 }
 
+function renderProfile(){
+  if(!profilePlayer) return;
+  const name=profilePlayer, R=computeRatings(players,matches), r=R[name]||{r:START,games:0,played:0};
+  const ranked=Object.entries(R).map(([n,v])=>({n,...v})).filter(x=>players.includes(x.n)||x.played>0).sort(boardCmp);
+  const rankIndex=ranked.findIndex(x=>x.n===name), provisional=r.games<PROV_GAMES;
+  let w=0,d=0,l=0;
+  for(const m of ratedMatches()){
+    const side=sideOf(m,name); if(!side) continue;
+    const result=resultForSide(m,side); if(result==='W') w++; else if(result==='D') d++; else l++;
+  }
+  const ratedTotal=w+d+l, winPct=ratedTotal?Math.round((w+d*.5)/ratedTotal*100):0;
+  const scoring=scorerTable().find(x=>x.n===name)||{gf:0,ga:0,gd:0,gp:0};
+  const bestPair=partnerships().find(x=>x.k.split(' & ').includes(name));
+  const form=formOf(name), odds=winOdds(name,R);
+  const history=matches.filter(m=>m.side_a.includes(name)||m.side_b.includes(name)).slice().reverse();
+  const totalPages=Math.max(1,Math.ceil(history.length/HIST_PAGE_SIZE));
+  profilePage=Math.min(Math.max(1,profilePage),totalPages);
+  const start=(profilePage-1)*HIST_PAGE_SIZE, shown=history.slice(start,start+HIST_PAGE_SIZE);
+  const pages=Array.from({length:totalPages},(_,i)=>i+1).map(p=>
+    `<button class="sm ${p===profilePage?'':'ghost'}" style="width:auto;min-width:40px" onclick="setProfilePage(${p})">${p}</button>`
+  ).join('');
+  const pager=totalPages>1?`<div class="row" style="justify-content:center;flex-wrap:wrap;margin-top:8px">
+    <button class="sm ghost" style="width:auto" onclick="setProfilePage(${profilePage-1})" ${profilePage===1?'disabled':''}>Previous</button>
+    ${pages}
+    <button class="sm ghost" style="width:auto" onclick="setProfilePage(${profilePage+1})" ${profilePage===totalPages?'disabled':''}>Next</button>
+  </div>`:'';
+  profileContent.innerHTML=`
+    <h1 style="margin-top:4px">${name}</h1>
+    <div class="sub" style="margin-bottom:12px">${provisional?`Provisional · ${PROV_GAMES-r.games} rated games needed`:`Rank #${rankIndex+1}`}${form.length?' · '+dots(form):''}</div>
+    <div class="profile-grid">
+      <div class="card profile-stat"><span class="sub">Rating</span><span class="rating">${Math.round(r.r)}</span></div>
+      <div class="card profile-stat"><span class="sub">Rated games</span><span class="rating">${r.games}</span></div>
+      <div class="card profile-stat"><span class="sub">Record</span><span class="rating">${w}-${d}-${l}</span></div>
+      <div class="card profile-stat"><span class="sub">Rated win rate</span><span class="rating">${winPct}%</span></div>
+      <div class="card profile-stat"><span class="sub">Goals</span><span class="rating">${scoring.gf}</span><span class="sub">${scoring.gd>=0?'+':''}${scoring.gd} difference</span></div>
+      <div class="card profile-stat"><span class="sub">Live win odds</span><span class="rating">${odds==null?'—':Math.round(odds*100)+'%'}</span></div>
+    </div>
+    ${bestPair?`<div class="card"><span class="sub">Best partnership</span><div style="font-weight:700;margin-top:3px">${bestPair.k}</div><div class="sub">${bestPair.w}-${bestPair.l}${bestPair.d?'-'+bestPair.d:''} · ${Math.round(bestPair.wr*100)}%</div></div>`:''}
+    <h2>Full match history <span class="sub" style="text-transform:none;letter-spacing:0">· ${history.length} games</span></h2>
+    ${shown.length?shown.map(m=>gameCard(m,m.status==='pending')).join(''):'<div class="card sub">No matches yet.</div>'}
+    ${pager}`;
+}
+
 function render(){
   fillSelects();
   $('rosterCard').style.display = meAdmin ? '' : 'none';
@@ -551,7 +611,7 @@ function render(){
     const oddsHtml = odds!=null ? `<span class="odds" title="Live chance to beat a random opponent">${Math.round(odds*100)}%</span>` : '';
     return `<div class="card rank ${prov?'prov':''}">
       <span class="pos ${prov?'':medal[est-1]||''}">${prov?'·':est}</span>
-      <div class="name">${x.n}${prov?`<span class="tag">provisional</span>`:''}
+      <div class="name"><button class="profile-link" data-player="${encodeURIComponent(x.n)}" onclick="openProfile(decodeURIComponent(this.dataset.player))">${x.n}</button>${prov?`<span class="tag">provisional</span>`:''}
         <div class="sub">${x.games} rated${prov?` · need ${PROV_GAMES-x.games} more`:''}${carry}${formOf(x.n).length?' '+dots(formOf(x.n)):''}</div>
       </div>
       ${oddsHtml}${move}
@@ -611,6 +671,7 @@ function render(){
     }
   }
   hist.innerHTML = done.length ? shown.map(m=>gameCard(m,false)).join('') + histControls : '<div class="card sub">No confirmed games yet.</div>';
+  if(profilePlayer) renderProfile();
 }
 
 // ---- auth ----
