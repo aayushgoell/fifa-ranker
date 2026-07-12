@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b7">
 <title>FIFA Ranker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root { --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --fg:#e8eaed; --mut:#9aa0aa; --accent:#0b7; --win:#2ea043; --loss:#e5484d; --warn:#d9a441; }
   :root[data-theme="light"] { --bg:#f8f0e3; --card:#ffffff; --line:#e3d8c8; --fg:#1a1d24; --mut:#6f665c; --accent:#0a9d6e; --win:#1f9d3a; --loss:#d1293d; --warn:#b7791f; }
@@ -13,7 +16,7 @@
   .move.up { color:var(--win); } .move.down { color:var(--loss); } .move.same { color:var(--mut); font-weight:400; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html { min-height:100%; background:var(--bg); }
-  body { margin:0; font:16px/1.4 -apple-system,system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px 16px 80px; max-width:600px; margin:0 auto; }
+  body { margin:0; font:16px/1.45 Manrope,-apple-system,system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px 16px 80px; max-width:600px; margin:0 auto; }
   h1 { font-size:22px; margin:6px 0 4px; }
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--mut); margin:24px 0 8px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; }
@@ -69,8 +72,17 @@
   .profile-link { width:auto; padding:0; border:0; background:transparent; color:var(--fg); text-align:left; font-weight:700; }
   .profile-link:hover { color:var(--accent); text-decoration:underline; }
   .profile-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-  .profile-stat { margin:0; text-align:center; }
+  button.profile-stat { margin:0; padding:14px 12px; text-align:center; background:var(--card); color:var(--fg); border:1px solid var(--line); cursor:pointer; }
+  button.profile-stat:hover, button.profile-stat.active { border-color:var(--accent); transform:translateY(-1px); }
   .profile-stat .rating { display:block; margin-top:3px; }
+  .profile-chart { margin-top:10px; padding:14px; overflow:hidden; }
+  .profile-chart-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:8px; }
+  .profile-chart svg { display:block; width:100%; height:auto; overflow:visible; }
+  .chart-grid { stroke:var(--line); stroke-width:1; }
+  .chart-axis-text { fill:var(--mut); font:11px Manrope,sans-serif; }
+  .chart-line { fill:none; stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }
+  .chart-legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; font-size:12px; color:var(--mut); }
+  .chart-swatch { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
   .star-display { padding:9px 10px; border:1px solid var(--line); border-radius:8px; color:#e5a900; letter-spacing:2px; text-align:center; background:var(--bg); }
 </style>
 </head>
@@ -329,13 +341,14 @@ function mostImproved(){
 }
 
 // ---- state ----
-let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histExpanded=false, histPage=1, profilePlayer=null, profilePage=1, editingMatchId=null, deletingMatchId=null;
+let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histExpanded=false, histPage=1, profilePlayer=null, profilePage=1, profileChart=null, editingMatchId=null, deletingMatchId=null;
 const HIST_PREVIEW=3, HIST_PAGE_SIZE=5;
 function toggleHist(){ histExpanded=!histExpanded; histPage=1; render(); }
 function setHistPage(page){ histPage=page; render(); hist.scrollIntoView({behavior:'smooth',block:'start'}); }
-function openProfile(name){ profilePlayer=name; profilePage=1; mainView.style.display='none'; profileView.style.display=''; renderProfile(); scrollTo({top:0,behavior:'smooth'}); }
-function closeProfile(){ profilePlayer=null; profileView.style.display='none'; mainView.style.display=''; scrollTo({top:0,behavior:'smooth'}); }
+function openProfile(name){ profilePlayer=name; profilePage=1; profileChart=null; mainView.style.display='none'; profileView.style.display=''; renderProfile(); scrollTo({top:0,behavior:'smooth'}); }
+function closeProfile(){ profilePlayer=null; profileChart=null; profileView.style.display='none'; mainView.style.display=''; scrollTo({top:0,behavior:'smooth'}); }
 function setProfilePage(page){ profilePage=page; renderProfile(); profileContent.scrollIntoView({behavior:'smooth',block:'start'}); }
+function selectProfileChart(stat){ profileChart=stat; renderProfile(); $('profileChartWrap')?.scrollIntoView({behavior:'smooth',block:'nearest'}); }
 // live win odds: average chance to beat a random ranked opponent (excludes self and AI)
 function winOdds(name, R){
   const rp=R[name] && R[name].r; if(rp==null) return null;
@@ -566,6 +579,81 @@ function gameCard(m, pending){
   </div>`;
 }
 
+function profileTimeline(name){
+  const rated=[...ratedMatches()].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const prefix=[], rating=[START], ratedGames=[0], winRate=[0], odds=[];
+  let wins=0, draws=0, played=0;
+  for(const m of rated){
+    prefix.push(m);
+    const side=sideOf(m,name); if(!side) continue;
+    played++;
+    const result=resultForSide(m,side); if(result==='W') wins++; else if(result==='D') draws++;
+    const RR=computeRatings(players,prefix);
+    rating.push(RR[name]?.r??START);
+    ratedGames.push(played);
+    winRate.push((wins+draws*.5)/played*100);
+    const chance=winOdds(name,RR); if(chance!=null) odds.push(chance*100);
+  }
+  const goalMatches=matches.filter(m=>m.status==='confirmed'&&m.end_type!=='void'&&(m.side_a.includes(name)||m.side_b.includes(name)))
+    .sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const goals=[0], goalDiff=[0]; let gf=0,ga=0;
+  for(const m of goalMatches){
+    const onA=m.side_a.includes(name);
+    gf+=onA?(m.score_a||0):(m.score_b||0); ga+=onA?(m.score_b||0):(m.score_a||0);
+    goals.push(gf); goalDiff.push(gf-ga);
+  }
+  return {rating,ratedGames,winRate,odds,goals,goalDiff};
+}
+
+function lineChart(title, series, options={}){
+  const values=series.flatMap(s=>s.values).filter(Number.isFinite);
+  if(values.length<2) return `<div id="profileChartWrap" class="card profile-chart"><b>${title}</b><div class="sub" style="margin-top:6px">More match data is needed to draw this chart.</div></div>`;
+  const W=520,H=220,L=48,R=14,T=18,B=34, maxPoints=Math.max(...series.map(s=>s.values.length));
+  let min=options.min??Math.min(...values), max=options.max??Math.max(...values);
+  if(min===max){ min-=1; max+=1; }
+  if(options.pad!==false){ const pad=(max-min)*.08; min-=pad; max+=pad; }
+  const x=i=>L+(maxPoints===1?0:i/(maxPoints-1))*(W-L-R);
+  const y=v=>T+(max-v)/(max-min)*(H-T-B);
+  const fmt=v=>options.percent?`${Math.round(v)}%`:Math.round(v).toString();
+  const grids=Array.from({length:5},(_,i)=>{
+    const value=max-(max-min)*i/4, yy=y(value);
+    return `<line class="chart-grid" x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}"/><text class="chart-axis-text" x="${L-7}" y="${yy+4}" text-anchor="end">${fmt(value)}</text>`;
+  }).join('');
+  const lines=series.map((s,si)=>{
+    const points=s.values.map((v,i)=>`${x(i)},${y(v)}`).join(' '), last=s.values.length-1;
+    return `<polyline class="chart-line" stroke="${s.color}" points="${points}"/><circle cx="${x(last)}" cy="${y(s.values[last])}" r="4" fill="${s.color}"/>`;
+  }).join('');
+  const legend=series.length>1?`<div class="chart-legend">${series.map(s=>`<span><span class="chart-swatch" style="background:${s.color}"></span>${s.label}</span>`).join('')}</div>`:'';
+  return `<div id="profileChartWrap" class="card profile-chart">
+    <div class="profile-chart-head"><b>${title}</b><span class="sub">${maxPoints-1} matches</span></div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${title} across matches"><title>${title}</title><desc>Trend across the player's recorded matches.</desc>
+      ${grids}${lines}
+      <text class="chart-axis-text" x="${L}" y="${H-8}">Start</text><text class="chart-axis-text" x="${W-R}" y="${H-8}" text-anchor="end">Latest</text>
+    </svg>${legend}
+  </div>`;
+}
+
+function recordChart(w,d,l){
+  const total=w+d+l;
+  if(!total) return `<div id="profileChartWrap" class="card profile-chart"><b>Rated record</b><div class="sub" style="margin-top:6px">No rated results yet.</div></div>`;
+  const rows=[['Wins',w,'var(--win)'],['Draws',d,'var(--warn)'],['Losses',l,'var(--loss)']];
+  return `<div id="profileChartWrap" class="card profile-chart"><div class="profile-chart-head"><b>Rated record</b><span class="sub">${total} matches</span></div>
+    <svg viewBox="0 0 520 174" role="img" aria-label="${w} wins, ${d} draws and ${l} losses"><title>Rated record</title><desc>${w} wins, ${d} draws and ${l} losses.</desc>
+      ${rows.map((row,i)=>{const yy=18+i*52,width=(row[1]/total)*390;return `<text class="chart-axis-text" x="0" y="${yy+17}">${row[0]}</text><rect x="72" y="${yy}" width="390" height="24" rx="6" fill="var(--line)"/><rect x="72" y="${yy}" width="${width}" height="24" rx="6" fill="${row[2]}"/><text class="chart-axis-text" x="${Math.max(80,80+width)}" y="${yy+17}">${row[1]}</text>`;}).join('')}
+    </svg></div>`;
+}
+
+function profileChartHtml(name,stat,w,d,l){
+  if(!stat) return '';
+  const t=profileTimeline(name);
+  if(stat==='rating') return lineChart('Rating over time',[{label:'Rating',values:t.rating,color:'var(--accent)'}]);
+  if(stat==='games') return lineChart('Rated games played',[{label:'Games',values:t.ratedGames,color:'var(--accent)'}],{min:0,pad:false});
+  if(stat==='record') return recordChart(w,d,l);
+  if(stat==='winrate') return lineChart('Rated win rate',[{label:'Win rate',values:t.winRate,color:'var(--win)'}],{min:0,max:100,percent:true,pad:false});
+  if(stat==='goals') return lineChart('Goals and goal difference',[{label:'Goals',values:t.goals,color:'var(--accent)'},{label:'Goal difference',values:t.goalDiff,color:'var(--warn)'}]);
+  return lineChart('Live win odds',[{label:'Win odds',values:t.odds,color:'var(--accent)'}],{min:0,max:100,percent:true,pad:false});
+}
+
 function renderProfile(){
   if(!profilePlayer) return;
   const name=profilePlayer, R=computeRatings(players,matches), r=R[name]||{r:START,games:0,played:0};
@@ -596,13 +684,14 @@ function renderProfile(){
     <h1 style="margin-top:4px">${name}</h1>
     <div class="sub" style="margin-bottom:12px">${provisional?`Provisional · ${PROV_GAMES-r.games} rated games needed`:`Rank #${rankIndex+1}`}${form.length?' · '+dots(form):''}</div>
     <div class="profile-grid">
-      <div class="card profile-stat"><span class="sub">Rating</span><span class="rating">${Math.round(r.r)}</span></div>
-      <div class="card profile-stat"><span class="sub">Rated games</span><span class="rating">${r.games}</span></div>
-      <div class="card profile-stat"><span class="sub">Record</span><span class="rating">${w}-${d}-${l}</span></div>
-      <div class="card profile-stat"><span class="sub">Rated win rate</span><span class="rating">${winPct}%</span></div>
-      <div class="card profile-stat"><span class="sub">Goals</span><span class="rating">${scoring.gf}</span><span class="sub">${scoring.gd>=0?'+':''}${scoring.gd} difference</span></div>
-      <div class="card profile-stat"><span class="sub">Live win odds</span><span class="rating">${odds==null?'—':Math.round(odds*100)+'%'}</span></div>
+      <button class="card profile-stat ${profileChart==='rating'?'active':''}" aria-pressed="${profileChart==='rating'}" onclick="selectProfileChart('rating')"><span class="sub">Rating</span><span class="rating">${Math.round(r.r)}</span></button>
+      <button class="card profile-stat ${profileChart==='games'?'active':''}" aria-pressed="${profileChart==='games'}" onclick="selectProfileChart('games')"><span class="sub">Rated games</span><span class="rating">${r.games}</span></button>
+      <button class="card profile-stat ${profileChart==='record'?'active':''}" aria-pressed="${profileChart==='record'}" onclick="selectProfileChart('record')"><span class="sub">Record</span><span class="rating">${w}-${d}-${l}</span></button>
+      <button class="card profile-stat ${profileChart==='winrate'?'active':''}" aria-pressed="${profileChart==='winrate'}" onclick="selectProfileChart('winrate')"><span class="sub">Rated win rate</span><span class="rating">${winPct}%</span></button>
+      <button class="card profile-stat ${profileChart==='goals'?'active':''}" aria-pressed="${profileChart==='goals'}" onclick="selectProfileChart('goals')"><span class="sub">Goals</span><span class="rating">${scoring.gf}</span><span class="sub">${scoring.gd>=0?'+':''}${scoring.gd} difference</span></button>
+      <button class="card profile-stat ${profileChart==='odds'?'active':''}" aria-pressed="${profileChart==='odds'}" onclick="selectProfileChart('odds')"><span class="sub">Live win odds</span><span class="rating">${odds==null?'—':Math.round(odds*100)+'%'}</span></button>
     </div>
+    ${profileChartHtml(name,profileChart,w,d,l)}
     ${bestPair?`<div class="card"><span class="sub">Best partnership</span><div style="font-weight:700;margin-top:3px">${bestPair.k}</div><div class="sub">${bestPair.w}-${bestPair.l}${bestPair.d?'-'+bestPair.d:''} · ${Math.round(bestPair.wr*100)}%</div></div>`:''}
     <h2>Full match history <span class="sub" style="text-transform:none;letter-spacing:0">· ${history.length} games</span></h2>
     ${shown.length?shown.map(m=>gameCard(m,m.status==='pending')).join(''):'<div class="card sub">No matches yet.</div>'}
