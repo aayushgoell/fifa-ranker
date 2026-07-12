@@ -8,6 +8,7 @@
 <style>
   :root { --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --fg:#e8eaed; --mut:#9aa0aa; --accent:#0b7; --win:#2ea043; --loss:#e5484d; --warn:#d9a441; }
   :root[data-theme="light"] { --bg:#f5f6f8; --card:#ffffff; --line:#e3e6ea; --fg:#1a1d24; --mut:#5f6b7a; --accent:#0a9d6e; --win:#1f9d3a; --loss:#d1293d; --warn:#b7791f; }
+  .odds { font-variant-numeric:tabular-nums; font-size:13px; font-weight:600; color:var(--accent); margin-right:10px; min-width:34px; text-align:right; }
   .move { font-variant-numeric:tabular-nums; font-size:12px; font-weight:700; margin-right:8px; }
   .move.up { color:var(--win); } .move.down { color:var(--loss); } .move.same { color:var(--mut); font-weight:400; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -145,7 +146,8 @@
       <span class="muted">–</span>
       <input class="sc" style="width:48px" id="penB" type="number" inputmode="numeric" placeholder="0">
     </div>
-    <button onclick="logGame()">Submit result</button>
+    <button id="submitBtn" onclick="logGame()">Submit result</button>
+    <div id="editBar" class="sub" style="display:none;margin-top:8px">✎ Editing an existing match · <a href="#" onclick="cancelEdit();return false" style="color:var(--accent)">cancel</a></div>
     <div id="gateWarn" class="sub" style="margin-top:8px;color:var(--warn);display:none"></div>
   </div>
 
@@ -294,7 +296,16 @@ function mostImproved(){
 }
 
 // ---- state ----
-let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false;
+let sb=null, players=[], matches=[], fmt='1v1', mePlayer=null, meAdmin=false, histShowAll=false;
+const HIST_PREVIEW=8;
+function toggleHist(){ histShowAll=!histShowAll; render(); }
+// live win odds: average chance to beat a random ranked opponent (excludes self and AI)
+function winOdds(name, R){
+  const rp=R[name] && R[name].r; if(rp==null) return null;
+  const opps=Object.keys(R).filter(n=> n!==name && n!=='AI' && R[n].games>0);
+  if(!opps.length) return null;
+  return opps.reduce((s,q)=> s + 1/(1+Math.pow(10,(R[q].r-rp)/400)), 0)/opps.length;
+}
 const $ = id => document.getElementById(id);
 
 async function load(){
@@ -454,12 +465,14 @@ function render(){
     const carry = ci ? ` · carry ${Math.round(ci.pct*100)}%` : '';
     const pp=prevPos[x.n], np=i+1;
     const move = pp ? (pp>np?`<span class="move up">▲${pp-np}</span>` : pp<np?`<span class="move down">▼${np-pp}</span>` : `<span class="move same">–</span>`) : '';
+    const odds=winOdds(x.n,R);
+    const oddsHtml = odds!=null ? `<span class="odds" title="Live chance to beat a random opponent">${Math.round(odds*100)}%</span>` : '';
     return `<div class="card rank ${prov?'prov':''}">
       <span class="pos ${prov?'':medal[est-1]||''}">${prov?'·':est}</span>
       <div class="name">${x.n}${prov?`<span class="tag">provisional</span>`:''}
         <div class="sub">${x.games} rated${prov?` · need ${PROV_GAMES-x.games} more`:''}${carry}${formOf(x.n).length?' '+dots(formOf(x.n)):''}</div>
       </div>
-      ${move}
+      ${oddsHtml}${move}
       <span class="rating">${Math.round(x.r)}</span>
     </div>`;
   }).join('') : '<div class="card sub">Add players and log a game.</div>';
@@ -495,7 +508,11 @@ function render(){
   $('pendingWrap').style.display = pend.length?'':'none';
   $('pending').innerHTML = pend.map(m=>gameCard(m,true)).join('');
   const done=matches.filter(m=>m.status!=='pending').slice().reverse();
-  hist.innerHTML = done.length ? done.map(m=>gameCard(m,false)).join('') : '<div class="card sub">No confirmed games yet.</div>';
+  const shown = histShowAll ? done : done.slice(0, HIST_PREVIEW);
+  const moreBtn = done.length>HIST_PREVIEW
+    ? `<button class="sm ghost" style="width:100%;margin-top:4px" onclick="toggleHist()">${histShowAll?'Show less':`Show all ${done.length} games`}</button>`
+    : '';
+  hist.innerHTML = done.length ? shown.map(m=>gameCard(m,false)).join('') + moreBtn : '<div class="card sub">No confirmed games yet.</div>';
 }
 
 // ---- auth ----
